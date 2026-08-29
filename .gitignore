@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+*.so
+
+venv/
+.env
+.env.*
+.venv/
+pythonenv*
+pip-log.txt
+
+# Jupyter / notebooks
+.ipynb_checkpoints/
+*.ipynb
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# IDE / editor
+.vscode/
+.idea/
+
+# Model / large files
+*.pt
+*.pth
+*.ckpt
+*.bin
+*.h5
+*.onnx
+
+# Video / datasets
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
+*.zip
+*.tar
+*.gz
+
+# Logs / temp
+*.log
+*.tmp
+*.bak
+*.swp
+*.swo
+
+# Streamlit
+.streamlit/
