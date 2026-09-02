@@ -8,80 +8,38 @@ import time
 from collections import Counter
 import os
 
+from pipeline import (
+    RobustFaceDetector,
+    get_detector,
+    predict_deepfake as pipeline_predict,
+    TemporalAggregator,
+    aggregate_video_predictions
+)
+
 # Load Deep-Fake-Detector pre-trained model from Hugging Face
-print("Loading model...")
+print("Loading AI model & detector...")
 model_name = "prithivMLmods/Deep-Fake-Detector-v2-Model"
 processor = AutoImageProcessor.from_pretrained(model_name)
 model = AutoModelForImageClassification.from_pretrained(model_name)
 model.eval()  # Set to evaluation mode
-print("Model loaded successfully!")
+face_detector = get_detector()
+print(f"Model & {face_detector.backend} detector loaded successfully!")
 
 
 def get_face_from_frame(frame: np.ndarray) -> List[Dict[str, Any]]:
-    """Extract faces from frame using Haar Cascade"""
-    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    faces = face_cascade.detectMultiScale(gray, scaleFactor=1.3, minNeighbors=5, minSize=(30, 30))
-    
-    face_data = []
-    for (x, y, w, h) in faces:
-        # Store face region and coordinates
-        face_img = frame[y:y+h, x:x+w]
-        face_data.append({
-            'image': face_img,
-            'coords': (x, y, w, h)
-        })
-    
-    return face_data
+    """Extract faces from frame using the robust detector"""
+    return face_detector.detect_faces(frame, max_faces=4)
 
 
 def predict_deepfake(face_image: np.ndarray) -> Tuple[Optional[str], float]:
     """Predict if face is real or deepfake"""
-    try:
-        # Convert BGR to RGB and then to PIL Image
-        face_rgb = cv2.cvtColor(face_image, cv2.COLOR_BGR2RGB)
-        pil_image = Image.fromarray(face_rgb)
-        
-        # Preprocess and predict
-        inputs = processor(images=pil_image, return_tensors="pt")
-        
-        with torch.no_grad():
-            outputs = model(**inputs)
-            logits = outputs.logits
-            probabilities = torch.softmax(logits, dim=1)[0]
-            predicted_class_idx = logits.argmax(-1).item()
-        
-        # Get label from model config
-        label = model.config.id2label[predicted_class_idx]
-        confidence = probabilities[predicted_class_idx].item()
-        
-        return label, confidence
-    
-    except Exception as e:
-        print(f"Error in prediction: {e}")
-        return None, 0.0
+    label, conf, _, _ = pipeline_predict(face_image, processor, model)
+    return label, conf
 
 
 def calculate_final_verdict(predictions: List[Dict[str, Any]]) -> Tuple[str, float, int, int]:
-    """Calculate final verdict based on majority voting"""
-    if not predictions:
-        return "Unknown", 0.0, 0, 0
-    
-    # Count occurrences of each label
-    label_counts = Counter([pred['label'] for pred in predictions])
-    
-    # Get majority label
-    final_label = label_counts.most_common(1)[0][0]
-    
-    # Calculate average confidence for the final label
-    label_confidences = [pred['confidence'] for pred in predictions if pred['label'] == final_label]
-    avg_confidence = sum(label_confidences) / len(label_confidences) if label_confidences else 0.0
-    
-    # Count real vs fake
-    real_count = label_counts.get("Realism", 0)
-    fake_count = label_counts.get("Deepfake", 0)
-    
-    return final_label, avg_confidence, real_count, fake_count
+    """Calculate final verdict using weighted temporal confidence aggregation"""
+    return aggregate_video_predictions(predictions)
 
 
 def draw_analysis_ui(frame: np.ndarray, time_remaining: float, predictions: List[Dict[str, Any]], current_verdict: Optional[str], real_count: int, fake_count: int, avg_confidence: float, mode: str = "Live") -> None:
@@ -187,7 +145,7 @@ def run_video_file_detection(video_path: str) -> None:
     
     # Analysis parameters
     ANALYSIS_WINDOW = min(120, duration)  # Use video duration if less than 2 minutes
-    FRAME_SKIP = max(1, fps // 2)  # Process 2 frames per second
+    FRAME_SKIP = max(1, fps // 3)  # Process ~3 frames per second
     
     # State variables
     predictions = []
@@ -201,7 +159,7 @@ def run_video_file_detection(video_path: str) -> None:
         frame_count += 1
         elapsed_time = frame_count / fps if fps > 0 else 0
         
-        # Process frame for face detection (every frame for smooth display)
+        # Process frame for face detection
         face_data = get_face_from_frame(frame)
         
         # Draw face boxes
@@ -209,19 +167,23 @@ def run_video_file_detection(video_path: str) -> None:
             x, y, w, h = face_info['coords']
             cv2.rectangle(frame, (x, y), (x+w, y+h), (255, 255, 0), 2)
         
-        # Run prediction only on specific frames
+        # Run prediction on sampled frames
         if frame_count % FRAME_SKIP == 0 and len(face_data) > 0:
-            # Use the first detected face
-            face_img = face_data[0]['image']
-            label, confidence = predict_deepfake(face_img)
+            best_face = face_data[0]
+            face_img = best_face['image']
+            label, confidence, p_real, p_fake = pipeline_predict(face_img, processor, model)
             
             if label:
                 predictions.append({
                     'label': label,
                     'confidence': confidence,
-                    'timestamp': elapsed_time
+                    'p_real': p_real,
+                    'p_fake': p_fake,
+                    'quality': best_face.get('quality', 50.0),
+                    'timestamp': elapsed_time,
+                    'frame_index': frame_count
                 })
-                print(f"Frame {frame_count}/{total_frames}: {label} ({confidence*100:.2f}%) - Total: {len(predictions)}")
+                print(f"Frame {frame_count}/{total_frames}: {label} ({confidence*100:.2f}%) [Quality: {best_face.get('quality', 0):.0f}] - Total: {len(predictions)}")
         
         # Calculate current leading verdict
         current_verdict, temp_confidence, temp_real, temp_fake = calculate_final_verdict(predictions)
@@ -238,13 +200,18 @@ def run_video_file_detection(video_path: str) -> None:
             break
     
     # Calculate final verdict
-    final_label, avg_confidence, real_count, fake_count = calculate_final_verdict(predictions)
+    agg_res = TemporalAggregator.aggregate(predictions)
+    final_label = agg_res['final_label']
+    avg_confidence = agg_res['avg_confidence']
+    real_count = agg_res['real_count']
+    fake_count = agg_res['fake_count']
     
     print(f"\n{'='*50}")
     print(f"VIDEO ANALYSIS COMPLETE")
     print(f"{'='*50}")
     print(f"Final Verdict: {final_label}")
-    print(f"Average Confidence: {avg_confidence*100:.2f}%")
+    print(f"Confidence: {avg_confidence*100:.2f}%")
+    print(f"Summary: {agg_res['verdict_summary']}")
     print(f"Real Count: {real_count}")
     print(f"Fake Count: {fake_count}")
     print(f"Total Predictions: {len(predictions)}")
@@ -284,7 +251,7 @@ def run_live_webcam_detection() -> None:
     # Analysis parameters
     ANALYSIS_WINDOW = 120  # 2 minutes in seconds
     VERDICT_DISPLAY_TIME = 5  # Show verdict for 5 seconds
-    FRAME_SKIP = 15  # Process every 15th frame to reduce computation
+    FRAME_SKIP = 6  # Process every 6th frame for responsive updates
     
     # State variables
     predictions = []
@@ -327,7 +294,7 @@ def run_live_webcam_detection() -> None:
                 break
             continue
         
-        # Process frame for face detection (every frame for smooth display)
+        # Process frame for face detection
         face_data = get_face_from_frame(frame)
         
         # Draw face boxes
@@ -335,16 +302,19 @@ def run_live_webcam_detection() -> None:
             x, y, w, h = face_info['coords']
             cv2.rectangle(frame, (x, y), (x+w, y+h), (255, 255, 0), 2)
         
-        # Run prediction only on specific frames
+        # Run prediction on sampled frames
         if frame_count % FRAME_SKIP == 0 and len(face_data) > 0:
-            # Use the first detected face
-            face_img = face_data[0]['image']
-            label, confidence = predict_deepfake(face_img)
+            best_face = face_data[0]
+            face_img = best_face['image']
+            label, confidence, p_real, p_fake = pipeline_predict(face_img, processor, model)
             
             if label:
                 predictions.append({
                     'label': label,
                     'confidence': confidence,
+                    'p_real': p_real,
+                    'p_fake': p_fake,
+                    'quality': best_face.get('quality', 50.0),
                     'timestamp': elapsed_time
                 })
                 print(f"Frame {frame_count}: {label} ({confidence*100:.2f}%) - Total: {len(predictions)}")
@@ -435,3 +405,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
