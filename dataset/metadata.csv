@@ -1,0 +1,7 @@
+video_path,label,split
+dataset/real/real_interview_01.mp4,real,val
+dataset/real/real_interview_02.mp4,real,test
+dataset/real/real_interview_03.mp4,real,test
+dataset/fake/fake_deeperforensics_01.mp4,fake,val
+dataset/fake/fake_deeperforensics_02.mp4,fake,test
+dataset/fake/fake_deeperforensics_03.mp4,fake,test

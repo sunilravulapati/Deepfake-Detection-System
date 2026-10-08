@@ -1,0 +1,9 @@
+# Streamlit configuration
+# No [theme] base is set, so Streamlit uses the visitor's system preference
+# (light or dark) by default.
+
+[theme]
+primaryColor = "#6366f1"
+
+[server]
+headless = true

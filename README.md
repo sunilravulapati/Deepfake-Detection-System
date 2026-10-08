@@ -1,324 +1,302 @@
-# 🛡️ Deepfake Detection System
+# An AI-Based Deepfake Detection System for Video and Real-Time Webcam Analysis Using Vision Transformers
 
-[![Python](https://img.shields.io/badge/Python-3.9%2B-blue.svg?logo=python&logoColor=white)](https://www.python.org/)
-[![Streamlit](https://img.shields.io/badge/Streamlit-1.35%2B-FF4B4B.svg?logo=streamlit&logoColor=white)](https://streamlit.io/)
-[![PyTorch](https://img.shields.io/badge/PyTorch-2.0%2B-EE4C2C.svg?logo=pytorch&logoColor=white)](https://pytorch.org/)
-[![Transformers](https://img.shields.io/badge/Hugging%20Face-Transformers-FFD21E.svg?logo=huggingface&logoColor=black)](https://huggingface.co/)
-[![MediaPipe](https://img.shields.io/badge/MediaPipe-Vision-007FFF.svg?logo=google&logoColor=white)](https://developers.google.com/mediapipe)
-[![OpenCV](https://img.shields.io/badge/OpenCV-Computer%20Vision-5C3EE8.svg?logo=opencv&logoColor=white)](https://opencv.org/)
-[![Tested with Pytest](https://img.shields.io/badge/Tested%20with-Pytest-0A9EDC.svg?logo=pytest&logoColor=white)](https://docs.pytest.org/)
+## Overview
 
-An enterprise-grade, AI-powered system for **real-time deepfake detection** across uploaded video files and live webcam streams. Built around a fine-tuned **Vision Transformer (ViT)** and an advanced multi-backend facial analysis pipeline, this solution evaluates authenticity frame-by-frame with landmark alignment, quality filtering, and weighted temporal confidence aggregation.
+Deepfakes represent synthetic media generated through deep learning techniques, such as autoencoders and generative adversarial networks (GANs), in which a person's facial likeness or expressions are altered or swapped. As deepfake synthesis becomes increasingly photorealistic, automated, reliable detection systems are critical for digital forensics, media integrity, and information security.
 
----
-
-## Table of Contents
-
-- [About The Project](#about-the-project)
-- [Updated Technology Stack](#updated-technology-stack)
-- [Key Features](#key-features)
-- [Architecture & How It Works](#architecture--how-it-works)
-- [Project Structure](#project-structure)
-- [Getting Started](#getting-started)
-  - [Prerequisites](#prerequisites)
-  - [Installation](#installation)
-- [Usage](#usage)
-  - [Streamlit Web Application](#streamlit-web-application)
-  - [Standalone CLI Script](#standalone-cli-script)
-  - [Running Tests](#running-tests)
-- [Pipeline Configuration](#pipeline-configuration)
-- [Performance & Limitations](#performance--limitations)
-- [Troubleshooting](#troubleshooting)
-- [Security & Ethical Considerations](#security--ethical-considerations)
-- [Acknowledgments](#acknowledgments)
-- [License](#license)
+This project implements an AI-based deepfake detection system designed for both offline video file analysis and real-time live webcam streams. The system couples a pre-trained Vision Transformer (`ViT-Base/16`) with an end-to-end computer vision pre-processing and post-processing pipeline:
+- **Video & Webcam Support:** Analyzes uploaded video files (`.mp4`, `.avi`, `.mov`) or live streams from a local camera device.
+- **Pre-trained ViT-B/16 Backbone:** Employs patch-based self-attention to identify high-level spatial manipulation artifacts.
+- **Multi-Backend Face Cascade:** Cascades through MTCNN, Google MediaPipe BlazeFace, and OpenCV Haar Cascade to maximize facial detection recall across challenging poses and lighting conditions.
+- **Face Quality Gate:** Filters low-contrast, over/under-exposed, or heavily blurred frames before model inference.
+- **Landmark Alignment & Contextual Crop:** Aligns faces via 5-point affine transformation and applies contextual padding ($\rho_{\text{pad}} = 0.10$) to capture boundary manipulation cues.
+- **Quality & Certainty Weighted Temporal Aggregation:** Replaces naive averaging with exponential moving averages weighted by face image quality and model confidence.
+- **Top-20% Suspicious Frame Pooling:** Focuses video-level classification on the top-20% highest fake-probability frames to detect localized or intermittent manipulations.
+- **Burst Anomaly Detection:** Flags clusters of consecutive suspicious frames that indicate transient deepfake artifacts.
+- **Streamlit Interface:** Provides an interactive web application with real-time video telemetry, forensic metric breakdowns, and report export.
 
 ---
 
-## About The Project
+## System Pipeline
 
-Traditional deepfake detectors frequently suffer from false positives caused by facial angle distortions, motion blur, poor lighting, or single-frame classification anomalies. 
-
-This updated **Deepfake Detection System** resolves these challenges by introducing a robust end-to-end computer vision and deep learning pipeline:
-1. **Multi-Backend Face Detection**: Flexible detection leveraging MTCNN, Google MediaPipe, and OpenCV fallbacks.
-2. **Facial Pre-Quality Gate**: Evaluates sharpness (Laplacian variance), illumination, and resolution prior to model inference.
-3. **Landmark-Based Affine Alignment**: Rotates and crops faces into standardized square frames with contextual margins.
-4. **ViT Classification**: Leverages a high-capacity Vision Transformer to output soft probability distributions (`Realism` vs `Deepfake`).
-5. **Weighted Temporal Aggregation**: Replaces naive majority voting with an exponential moving average, sample quality weighting, and localized anomaly burst detection.
-6. **Modern Adaptive UI**: A Streamlit interface that automatically matches user system themes (Light/Dark) with dynamic CSS tokens and an interactive telemetry HUD.
-
----
-
-## Updated Technology Stack
-
-| Layer / Component | Technology | Description |
-| :--- | :--- | :--- |
-| **Web UI & Framework** | **Streamlit** (`>=1.35.0`) | Interactive web application with adaptive CSS theme bridging, responsive mode toggles, and live video streaming containers. |
-| **Deep Learning Engine** | **PyTorch** (`>=2.0.0`) & **TorchVision** | Deep learning framework driving model inference, tensor operations, and GPU/CPU acceleration. |
-| **Transformer Backbone** | **Hugging Face Transformers** (`>=4.38.0`) | Vision Transformer pipeline (`AutoImageProcessor`, `AutoModelForImageClassification`) using [`prithivMLmods/Deep-Fake-Detector-v2-Model`](https://huggingface.co/prithivMLmods/Deep-Fake-Detector-v2-Model). |
-| **Primary Face Detector** | **MTCNN** (`facenet-pytorch >=2.5.0`) | Multi-task Cascaded Convolutional Networks with 5-point facial landmark detection (eyes, nose, mouth corners) for precise alignment. |
-| **Secondary Face Detector** | **Google MediaPipe** (`>=0.10.0`) | Task-based BlazeFace vision detector (`blaze_face_short_range.tflite`) providing lightweight, ultra-fast 6-keypoint detection. |
-| **Fallback Face Detector** | **OpenCV** (`opencv-contrib-python >=4.8.0`) | Haar Cascade (`haarcascade_frontalface_default.xml`) & YuNet DNN classifiers for universal compatibility and zero-dependency fallbacks. |
-| **Image & Preprocessing** | **OpenCV**, **Pillow (PIL)**, **NumPy** | BGR-to-RGB conversion, 2D affine transformation matrices, Laplacian variance blur estimation, and histogram-based exposure validation. |
-| **Aggregation & Smoothing** | **Custom Pipeline (`pipeline.py`)** | `TemporalAggregator` implementing quality-weighted soft probabilities, exponential smoothing, and localized anomaly/burst detection. |
-| **Quality Assurance / Tests** | **Pytest** (`>=7.0.0`) | Automated test suite verifying quality filtering, alignment maths, temporal voting logic, and video sampling algorithms. |
-| **Styling & Design System** | **Vanilla CSS + Google Fonts (Inter)** | Glassmorphism, CSS variable bindings (`--primary-color`, `--background-color`), metric cards, and badge indicators. |
-
----
-
-## Key Features
-
-- **Multi-Backend Face Detection**:
-  - Automatically identifies available detection libraries (`MTCNN` → `MediaPipe` → `OpenCV Haar/YuNet`).
-  - Seamless fallback ensures the application runs across diverse operating systems and hardware configurations.
-- **Pre-Inference Face Quality Gate**:
-  - Automatically filters out frames that are too small (`<40px`), excessively blurry (Laplacian variance threshold), or poorly illuminated.
-  - Prevents noisy or corrupt crops from degrading classifier accuracy.
-- **Facial Alignment & Aspect Ratio Normalization**:
-  - Standardizes face angle using 5-point landmark affine rotation.
-  - Adds contextual margins around the detected bounding box to maintain facial feature context for the Vision Transformer.
-- **Calibrated Temporal Aggregation**:
-  - Evaluates both `p_real` and `p_fake` soft probability outputs rather than hard binary classes.
-  - Weights predictions according to face quality, bounding box scale, and detector confidence.
-  - Features localized anomaly detection to catch brief deepfake bursts or single-frame glitches.
-- **Dual Operating Modes**:
-  - **Video File Mode**: Processes MP4, AVI, or MOV files with adaptive frame sampling, progress telemetry, and frame-by-frame verdict charts.
-  - **Live Webcam Mode**: Live webcam stream with real-time bounding box annotations, confidence gauges, and aggregate session metrics.
-- **Standalone CLI Utility**:
-  - `deepfake_detector.py` enables headless batch processing and command-line execution without requiring the browser UI.
-
----
-
-## Architecture & How It Works
-
+```text
+Video / Webcam Stream
+        ↓
+Frame Sampling (sample_video_frame_indices)
+        ↓
+Face Detection Cascade (MTCNN → MediaPipe BlazeFace → OpenCV Haar)
+        ↓
+Face Quality Gate (Laplacian variance, brightness, contrast, size)
+        ↓
+Landmark Alignment + Contextual Crop (5-point affine, ρ_pad = 0.10)
+        ↓
+Pre-trained ViT-B/16 Feature Extraction & Classification
+        ↓
+Softmax Probabilities: P(real), P(fake)
+        ↓
+Quality + Certainty Weighted Temporal Aggregation
+        ↓
+Top-20% Suspicious Frame Pooling
+        ↓
+Burst Anomaly Detection (consecutive suspicious frames)
+        ↓
+Final Calibrated Verdict (Likely Authentic / Suspicious / Highly Suspicious)
 ```
-                     ┌──────────────────────────────┐
-                     │   Video File / Webcam Feed   │
-                     └──────────────┬───────────────┘
-                                    │
-                                    ▼
-                     ┌──────────────────────────────┐
-                     │  Frame Extraction & Sampling │
-                     │ (Adaptive FPS Frame Sampling)│
-                     └──────────────┬───────────────┘
-                                    │
-                                    ▼
-                     ┌──────────────────────────────┐
-                     │     RobustFaceDetector       │
-                     │  [MTCNN / MediaPipe / Haar]  │
-                     └──────────────┬───────────────┘
-                                    │
-                         Face Detected & Landmarks
-                                    │
-                                    ▼
-                     ┌──────────────────────────────┐
-                     │   Face Quality Gate Check    │
-                     │  - Sharpness (Laplacian Var) │
-                     │  - Exposure & Min Resolution │
-                     └──────────────┬───────────────┘
-                                    │ (Passed Quality Gate)
-                                    ▼
-                     ┌──────────────────────────────┐
-                     │   Affine Landmark Alignment  │
-                     │  & Contextual Square Crop    │
-                     └──────────────┬───────────────┘
-                                    │
-                                    ▼
-                     ┌──────────────────────────────┐
-                     │  Vision Transformer (ViT)    │
-                     │   Soft Probability Inference │
-                     │     (p_real vs. p_fake)      │
-                     └──────────────┬───────────────┘
-                                    │
-                                    ▼
-                     ┌──────────────────────────────┐
-                     │     TemporalAggregator       │
-                     │ - Quality-Weighted Averages  │
-                     │ - Anomaly & Burst Detection  │
-                     └──────────────┬───────────────┘
-                                    │
-                                    ▼
-                     ┌──────────────────────────────┐
-                     │  Streamlit UI & HUD Overlay  │
-                     │  - Color-Coded Bounding Boxes│
-                     │  - Authenticity Verdict & Log│
-                     └──────────────────────────────┘
+
+---
+
+## Features
+
+- **Video File Analysis:** Supports frame sampling, sequential facial tracking, temporal aggregation, and video-level verdict calculation.
+- **Real-Time Webcam Analysis:** Processes live video input with periodic inference pacing to maintain smooth display rendering.
+- **Multi-Backend Face Detection Cascade:** Robust multi-tier fallback (MTCNN $\rightarrow$ MediaPipe $\rightarrow$ Haar) ensuring high detection recall even under partial occlusion.
+- **Face Quality Gate:** Eliminates low-quality, blurry, or extreme-illumination frames that degrade transformer classification accuracy.
+- **Facial Landmark Alignment:** Standardizes head tilt and facial orientation using 5-point affine transformation.
+- **Contextual Cropping:** Preserves outer facial contours and blending boundaries where synthesis artifacts commonly reside ($\rho_{\text{pad}} = 0.10$).
+- **Pre-trained Vision Transformer Inference:** Evaluates global patch correlations across facial regions via multi-head self-attention.
+- **Temporal Aggregation:** Exponential smoothing weighted by face sharpness, contrast, and model certainty.
+- **Top-20% Suspicious Frame Pooling:** Mitigates dilution from predominantly authentic frames in selectively edited videos.
+- **Burst Anomaly Detection:** Detects temporal bursts of consecutive manipulated frames ($\ge 3$ consecutive frames).
+- **Forensic Visualization:** Frame-level confidence timelines, metric summaries, and confusion matrix charts.
+- **JSON & CSV Export:** Export detailed per-frame and per-video forensic audit logs.
+- **Local Processing:** Runs entirely on local hardware (CPU/GPU) without transmitting video data to external cloud services, safeguarding user privacy.
+
+---
+
+## Model
+
+| Parameter | Specification |
+| :--- | :--- |
+| **Model Name** | `prithivMLmods/Deep-Fake-Detector-v2-Model` |
+| **Architecture** | Vision Transformer (`ViT-Base/16`) |
+| **Input Resolution** | $224 \times 224$ pixels, 3 channels (RGB) |
+| **Patch Size** | $16 \times 16$ |
+| **Transformer Layers** | 12 |
+| **Attention Heads** | 12 |
+| **Hidden Size** | 768 |
+| **Output Classes** | 2 (`Realism` / `Deepfake`) |
+
+> **IMPORTANT NOTE:** This model is utilized strictly as a publicly available pre-trained inference backbone accessed via Hugging Face Transformers. The model was **not** trained or fine-tuned by our team.
+
+---
+
+## Face Detection
+
+To guarantee dependable face localization across varied environments, the pipeline implements a three-tier cascade:
+
+1. **MTCNN (Multi-task Cascaded Convolutional Networks) — Primary:** Employs a three-stage deep CNN network (P-Net, R-Net, O-Net) to detect faces and extract 5 facial landmarks (eyes, nose, mouth corners) with high precision.
+2. **MediaPipe BlazeFace — Secondary:** If MTCNN fails to detect a face, the system automatically falls back to Google's lightweight BlazeFace model (`blaze_face_short_range.tflite`), optimized for sub-millisecond mobile and webcam inference.
+3. **OpenCV Haar Cascade — Tertiary Fallback:** If deep learning detectors are unavailable or produce no candidate bounding box, an OpenCV frontal face Haar Cascade acts as a rapid, lightweight fallback.
+
+---
+
+## Temporal Decision Method
+
+Single-frame classification often produces noisy predictions due to fleeting facial expressions, motion blur, or compression artifacts. The temporal aggregator calculates a robust video-level verdict through the following steps:
+
+1. **Frame-Level Probabilities:** For each analyzed frame $t$, the ViT produces raw softmax probabilities $P(\text{real})_t$ and $P(\text{fake})_t$.
+2. **Quality & Certainty Weighting:** Each frame is weighted by its normalized face quality score $Q_t \in [0, 1]$ (computed from Laplacian variance, brightness, and contrast) and classification certainty $C_t = |P(\text{fake})_t - 0.5| \times 2$:
+   $$w_t = 0.5 \cdot Q_t + 0.5 \cdot C_t$$
+3. **Weighted Temporal Aggregation:** Predictions are accumulated using an exponential moving average:
+   $$\bar{P}_{\text{fake}} = \frac{\sum_{t=1}^N w_t \cdot P(\text{fake})_t}{\sum_{t=1}^N w_t}$$
+4. **Top-20% Suspicious Frame Pooling:** To catch short-duration or localized face swaps that would be washed out by a video-level mean, the top $K = \lceil 0.20 \times N \rceil$ frames with the highest $P(\text{fake})_t$ are isolated and averaged into a pooled score $S_{\text{top-}k}$.
+5. **Burst Anomaly Detection:** A sliding window scans for sequences of $\ge 3$ consecutive frames where $P(\text{fake})_t > 0.60$. If detected, an anomaly flag is raised.
+6. **Video-Level Decision:** The final decision compares the composite score against the calibrated decision threshold $\tau_d = 0.40$:
+   $$\text{Verdict} = \begin{cases} \text{Deepfake}, & \text{if } \bar{P}_{\text{fake}} \ge 0.40 \text{ or } S_{\text{top-}k} \ge 0.40 \text{ or Anomaly} \\ \text{Real}, & \text{otherwise} \end{cases}$$
+
+---
+
+## Dataset and Evaluation
+
+The system was evaluated on a benchmark sample from the **DeepFake Detection (DFD)** dataset:
+
+- **Total Videos:** 20 labeled video sequences
+- **Distribution:** 10 authentic videos (`Real`) and 10 manipulated videos (`Fake`)
+- **Total Frames Analyzed:** 770 frames (average 38.5 frames per video)
+- **Decision Threshold ($\tau_d$):** 0.40
+- **Contextual Padding ($\rho_{\text{pad}}$):** 0.10
+- **Pooling Strategy:** Top-20% suspicious-frame pooling
+
+### Evaluation Results
+
+| Metric | Score |
+| :--- | :--- |
+| **Accuracy** | **75.0%** (15 / 20 correct) |
+| **Precision** | **77.8%** (7 / 9 positive predictions) |
+| **Recall (Sensitivity)** | **70.0%** (7 / 10 fakes detected) |
+| **F1-Score** | **73.7%** |
+| **Specificity** | **80.0%** (8 / 10 authentic videos verified) |
+
+### Confusion Matrix
+
+| | Actual Real | Actual Fake |
+| :--- | :---: | :---: |
+| **Predicted Real** | **TN = 8** | **FN = 3** |
+| **Predicted Fake** | **FP = 2** | **TP = 7** |
+
+> **IMPORTANT EVALUATION NOTE:** These metrics reflect a small preliminary evaluation on 20 videos from the DFD dataset. They are reported transparently for academic inspection and must **not** be presented as large-scale benchmark performance across unconstrained datasets.
+
+---
+
+## Performance
+
+The following benchmarks were recorded during live execution on an Intel/AMD CPU environment (Python 3.14, PyTorch, single-threaded inference):
+
+| Metric | Measured Value | Note |
+| :--- | :--- | :--- |
+| **ViT Inference Latency** | **87.3 – 90.9 ms** | Raw forward pass per $224 \times 224$ face crop on CPU |
+| **End-to-End Latency** | **114.0 – 191.0 ms** | Includes face detection, landmark alignment, cropping, ViT inference, and temporal update |
+| **Video Processing Throughput** | **1.31 FPS** | Full pipeline throughput on video file analysis (770 frames processed in 588.72 s total) |
+| **Webcam Display FPS** | **20 – 30 FPS** | UI camera frame acquisition and display loop |
+| **Webcam ViT Inference Frequency** | **1 – 3 inferences/sec** | Paced inference to preserve fluent camera display responsiveness |
+
+---
+
+## Installation
+
+### Prerequisites
+- Python 3.9 or higher (tested on Python 3.10 – 3.14)
+- Git
+- Web camera (optional, required only for live webcam analysis)
+
+### Setup Instructions
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/sunilravulapati/Deepfake-Detection-System.git
+cd Deepfake-Detection-System
+
+# 2. Create and activate a virtual environment
+python -m venv venv
+
+# On Windows (PowerShell):
+.\venv\Scripts\Activate.ps1
+# On Windows (Command Prompt):
+.\venv\Scripts\activate.bat
+# On Linux / macOS:
+source venv/bin/activate
+
+# 3. Upgrade pip and install required dependencies
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+---
+
+## Running the Application
+
+### 1. Streamlit Web Interface (Recommended)
+Launch the interactive web application:
+```bash
+streamlit run app.py
+```
+Open your browser at `http://localhost:8501`. From the web dashboard, you can:
+- Upload video files (`.mp4`, `.avi`, `.mov`) for frame-by-frame analysis
+- Launch the real-time webcam detection stream
+- Inspect temporal timelines, quality distributions, and verdict breakdowns
+- Export forensic audit logs as JSON and CSV
+
+### 2. Standalone CLI Detection Script
+Run the interactive command-line detector:
+```bash
+python deepfake_detector.py
+```
+
+### 3. Running the Test Suite
+Execute the comprehensive test suite with `pytest`:
+```bash
+python -m pytest
+```
+
+### 4. Running the Benchmark Evaluation
+Execute the standalone 20-video DFD evaluation runner:
+```bash
+python evaluation/run_evaluation.py
 ```
 
 ---
 
 ## Project Structure
 
-```
-DeepfakeDetection/
-├── .streamlit/
-│   └── config.toml                  # Streamlit theme & server configuration
-├── models/
-│   └── blaze_face_short_range.tflite# MediaPipe BlazeFace detection model
-├── tests/
-│   ├── test_detection_logic.py      # Unit tests for temporal prediction aggregation
-│   └── test_pipeline.py            # Unit tests for quality filter, alignment & backends
-├── app.py                           # Main Streamlit web application with modern UI
-├── pipeline.py                      # Core CV/ML pipeline (RobustFaceDetector, TemporalAggregator)
-├── deepfake_detector.py             # Standalone CLI / batch video analysis script
-├── requirements.txt                 # Project dependencies
-├── AGENTS.md                        # Agent workspace instructions
-└── README.md                        # Documentation
-```
-
----
-
-## Getting Started
-
-### Prerequisites
-
-- **Python**: Version `3.9` or higher (`Python 3.10`–`3.14` supported)
-- **Camera**: Webcam required for live stream analysis
-- **GPU (Optional)**: CUDA-enabled GPU supported for accelerated inference via PyTorch
-
-### Installation
-
-1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/sunilravulapati/Deepfake-Detection-System.git
-   cd DeepfakeDetection
-   ```
-
-2. **Create and activate a virtual environment**:
-   - **Windows (PowerShell)**:
-     ```powershell
-     python -m venv venv
-     .\venv\Scripts\Activate.ps1
-     ```
-   - **macOS / Linux**:
-     ```bash
-     python3 -m venv venv
-     source venv/bin/activate
-     ```
-
-3. **Install the updated dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-   > **Note**: If installing manually without `requirements.txt`:
-   > ```bash
-   > pip install streamlit torch torchvision transformers facenet-pytorch mediapipe opencv-contrib-python pillow numpy pytest
-   > ```
-
----
-
-## Usage
-
-### Streamlit Web Application
-
-Launch the web application locally:
-```bash
-streamlit run app.py
-```
-The browser will automatically open at `http://localhost:8501`.
-
-1. **Video Analysis Mode**:
-   - Select **Video Analysis** from the mode selector.
-   - Upload any video file (`.mp4`, `.avi`, `.mov`).
-   - Click **Start Analysis** to process frames, view the real-time telemetry HUD, and inspect the confidence distribution summary.
-2. **Live Webcam Mode**:
-   - Select **Live Webcam** from the mode selector.
-   - Click **Start Live Detection** to begin real-time face tracking and deepfake scoring.
-   - View frame metrics, real vs fake ratios, and session summaries upon stopping.
-
----
-
-### Standalone CLI Script
-
-For headless video analysis, automated pipelines, or batch processing:
-```bash
-python deepfake_detector.py
-```
-The script will run the detection pipeline against a specified video path and output detailed terminal logs including frame indices, detected labels, confidence percentages, quality scores, and the final aggregated verdict.
-
----
-
-### Running Tests
-
-Execute the automated test suite with `pytest`:
-```bash
-python -m pytest
-```
-
-Output:
 ```text
-tests\test_detection_logic.py ...                                        [ 27%]
-tests\test_pipeline.py ........                                          [100%]
-============================= 11 passed in 15.23s =============================
+Deepfake-Detection-System/
+├── app.py                      # Main Streamlit web application
+├── pipeline.py                 # Core detection, quality gate & temporal aggregation
+├── deepfake_detector.py        # CLI detection script (interactive video/webcam)
+├── verdict_logic.py            # 5-tier calibrated verdict classification
+├── research_dashboard.py       # Matplotlib figure generators for research UI
+├── research_results.py         # Benchmark and dataset telemetry constants
+├── custom_fallback.py          # Preserved QMC-FD heuristic fallback (disabled)
+├── experiment_config.yaml      # Pipeline & experiment parameters (τd=0.40, ρpad=0.10)
+├── requirements.txt            # Python dependencies
+├── README.md                   # System documentation
+├── .gitignore                  # Git ignore rules
+├── paper.tex                   # Academic paper source (LaTeX)
+│
+├── dataset/                    # Evaluation video dataset (DFD)
+│   ├── real/                   # Authentic reference videos (10 videos)
+│   ├── fake/                   # Deepfake manipulated videos (10 videos)
+│   └── metadata.csv            # Dataset ground-truth annotations
+│
+├── evaluation/                 # Benchmark evaluation scripts & outputs
+│   ├── run_evaluation.py       # Standalone 20-video evaluation runner
+│   ├── evaluation_results.csv  # Comprehensive per-video evaluation metrics
+│   ├── per_video_results.csv   # Per-video breakdown
+│   ├── evaluation_summary.json # Machine-readable metrics summary
+│   └── EVALUATION_REPORT.md    # Full evaluation report
+│
+├── results/                    # Research figures, experiment data & reports
+│   ├── confusion_matrix.png    # 20-video DFD evaluation confusion matrix
+│   ├── metrics.png             # 20-video DFD evaluation performance metrics
+│   ├── p_fake_comparison.png   # 20-video DFD real vs. fake P(fake) distribution
+│   ├── fps_comparison.png      # Latency & throughput benchmark comparison
+│   ├── csv/                    # Experiment ablation and threshold sweep CSVs
+│   ├── figures/                # Research analysis charts and ROC curves
+│   ├── json/                   # Experiment metrics JSON summaries
+│   └── reports/                # Research experiment audit reports
+│
+├── docs/                       # Technical reports & documentation
+│   └── deepfake_technical_report.md  # Comprehensive technical architecture audit
+│
+├── models/                     # Lightweight local model assets
+│   └── blaze_face_short_range.tflite # MediaPipe BlazeFace detector model
+│
+└── tests/                      # Unit and integration test suite
+    ├── test_pipeline.py        # Pipeline & temporal aggregation tests
+    ├── test_verdict_logic.py   # Verdict classification band unit tests
+    ├── test_custom_fallback.py # Preserved QMC fallback component tests
+    ├── test_research_presentation.py # Metrics integrity tests
+    ├── test_auc_unit.py        # AUC Mann-Whitney U metric calculation tests
+    ├── test_detection_logic.py # Detection logic smoke tests
+    ├── benchmark_structural_cue.py # Structural cue benchmark script
+    ├── benchmark_temporal_pairs.py # Controlled temporal pairs benchmark
+    ├── test_improved_temporal.py   # Articulation-gated temporal residual test
+    └── inspect_videos.py       # Video inspection diagnostic script
 ```
 
 ---
 
-## Pipeline Configuration
+## Limitations
 
-Key pipeline parameters in `pipeline.py` and `app.py` can be customized to balance performance and speed:
-
-| Parameter | Default | Location | Description |
-| :--- | :--- | :--- | :--- |
-| `min_size` | `40` px | `pipeline.py` | Minimum face crop width/height required to pass the quality gate. |
-| `min_blur_var` | `20.0` | `pipeline.py` | Minimum Laplacian variance threshold for motion blur detection. |
-| `padding_ratio` | `0.25` | `pipeline.py` | Contextual expansion ratio added around detected face bounding boxes. |
-| `target_sample_fps` | `3.0` | `pipeline.py` | Frame sampling rate for video file analysis. |
-| `max_faces` | `4` | `pipeline.py` | Maximum simultaneous faces detected per frame. |
-| `temperature` | `1.0` | `pipeline.py` | Softmax temperature scaling for ViT logit calibration. |
+- **Small Preliminary Evaluation Dataset:** Evaluated on a sample of 20 videos from the DFD benchmark; performance figures should not be extrapolated as universal generalization guarantees.
+- **No Task-Specific Fine-Tuning:** The Vision Transformer operates using publicly available pre-trained weights without fine-tuning on the evaluation dataset.
+- **Domain Shift:** Detector sensitivity may fluctuate when confronted with compression formats, resolutions, or synthesis techniques unrepresented in the pre-training data.
+- **Single-Face Primary Tracking:** The current pipeline focuses primarily on the most prominent detected face per frame.
+- **CPU Inference Throughput:** Full pipeline inference on CPU operates at ~1.31 FPS, making multi-frame video analysis computationally demanding without GPU acceleration.
+- **External Model Dependency:** Relies on the architecture and feature representations learned by `prithivMLmods/Deep-Fake-Detector-v2-Model`.
 
 ---
 
-## Performance & Limitations
+## Future Scope
 
-- **Model Evaluation**: The Vision Transformer classifier reports ~92% accuracy on benchmark deepfake evaluation datasets.
-- **Hardware Acceleration**: CPU execution operates smoothly with sample rates of 2–3 FPS. An NVIDIA GPU with CUDA provides real-time multi-face throughput.
-- **Adversarial Conditions**: Heavy video compression, extreme head rotation, severe occlusion, or low-light sensor noise can influence confidence scores. The built-in quality gate suppresses low-confidence predictions under these conditions.
-- **Multimodal Security**: For mission-critical identity verification or interview proctoring, pair video facial detection with audio deepfake analysis and interactive liveness challenges (e.g., eye-blink or head-pose prompts).
-
----
-
-## Troubleshooting
-
-- **MediaPipe / MTCNN Backend Issues**:
-  - The pipeline automatically falls back to OpenCV Haar Cascade if neural detectors are not found or encounter missing dependencies.
-  - To verify detector backend:
-    ```python
-    from pipeline import get_detector
-    detector = get_detector()
-    print(f"Active backend: {detector.backend}")
-    ```
-- **Webcam Access Denied**:
-  - Verify that camera permissions are granted in your operating system settings and browser permissions.
-- **Video File Upload Size**:
-  - By default, Streamlit allows uploads up to 200MB. To increase this limit, add the following to `.streamlit/config.toml`:
-    ```toml
-    [server]
-    maxUploadSize = 500
-    ```
+- **Large-Scale Multi-Dataset Benchmarking:** Comprehensive cross-dataset evaluations on FaceForensics++, Celeb-DF v2, and DFDC.
+- **Parameter-Efficient Fine-Tuning (PEFT):** Adapting the Vision Transformer backbone via LoRA (Low-Rank Adaptation) on domain-specific facial forgery datasets.
+- **Spatiotemporal Transformer Backbones:** Integrating end-to-end video transformers (e.g., TimeSformer, VideoMAE) to learn joint spatial and temporal cues directly.
+- **Simultaneous Multi-Face Tracking:** Extending facial tracking to evaluate multiple subjects concurrently within crowded scenes.
+- **Multimodal Audio-Visual Detection:** Incorporating audio-visual synchronization analysis to detect speech-lip desynchronization and synthetic voice generation.
 
 ---
 
-## Security & Ethical Considerations
+## Research / Academic Note
 
-- **Probabilistic Scoring**: Results produced by the Vision Transformer and aggregation pipeline are probabilistic estimates, not definitive legal proof.
-- **Defense in Depth**: Do not base automated identity decisions solely on a single frame or detector.
-- **Privacy First**: Video frames processed by this application are evaluated in-memory and are not transmitted to external cloud servers.
-
----
-
-## Acknowledgments
-
-- **[prithivMLmods/Deep-Fake-Detector-v2-Model](https://huggingface.co/prithivMLmods/Deep-Fake-Detector-v2-Model)**: Pre-trained Vision Transformer deepfake classifier.
-- **[Hugging Face Transformers](https://github.com/huggingface/transformers)**: Image classification API and pipeline utilities.
-- **[Streamlit](https://streamlit.io/)**: Modern Python web application framework.
-- **[FaceNet-PyTorch](https://github.com/timesler/facenet-pytorch)**: Robust MTCNN face detection and alignment implementation.
-- **[Google MediaPipe](https://developers.google.com/mediapipe)**: Fast, lightweight mobile & desktop vision models.
-- **[OpenCV](https://opencv.org/)**: Essential computer vision foundation.
-
----
-
-## License
-
-This project is distributed under the terms of the individual licenses of the incorporated models and dependencies. Refer to the respective library repositories for license details.
+This project is developed solely for research, academic experimentation, and preliminary media screening. It does **not** constitute a legally definitive forensic verification tool. In forensic, legal, or high-stakes contexts, automated model outputs should always be corroborated by trained digital forensics specialists through multi-faceted evidence analysis.

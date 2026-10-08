@@ -1,0 +1,28 @@
+{
+  "total_samples": 20,
+  "tp": 7,
+  "tn": 8,
+  "fp": 2,
+  "fn": 3,
+  "accuracy": 0.75,
+  "precision": 0.7778,
+  "recall": 0.7,
+  "specificity": 0.8,
+  "f1": 0.7368,
+  "confusion_matrix": {
+    "TP": 7,
+    "TN": 8,
+    "FP": 2,
+    "FN": 3
+  },
+  "avg_pfake_real": 0.2668,
+  "avg_pfake_fake": 0.4305,
+  "avg_processing_time_s": 29.44,
+  "total_processing_time_s": 588.72,
+  "avg_frames_analyzed": 38.5,
+  "total_frames_analyzed": 770,
+  "processing_fps": 1.31,
+  "videos_successfully_processed": 20,
+  "videos_failed_or_skipped": 0,
+  "failed_details": []
+}

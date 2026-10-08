@@ -1,0 +1,557 @@
+\documentclass[conference]{IEEEtran}
+
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{multirow}
+\usepackage{array}
+\usepackage{url}
+\usepackage{stfloats}
+
+% Float and layout tuning to ensure strictly 6 pages with clean flow
+\renewcommand{\topfraction}{0.95}
+\renewcommand{\bottomfraction}{0.95}
+\renewcommand{\textfraction}{0.05}
+\renewcommand{\floatpagefraction}{0.85}
+\renewcommand{\dbltopfraction}{0.95}
+\renewcommand{\dblfloatpagefraction}{0.85}
+\setlength{\textfloatsep}{5pt plus 1pt minus 1pt}
+\setlength{\dbltextfloatsep}{6pt plus 1pt minus 1pt}
+\setlength{\floatsep}{4pt plus 1pt minus 1pt}
+\setlength{\abovecaptionskip}{3pt}
+\setlength{\belowcaptionskip}{2pt}
+
+\renewcommand{\IEEEkeywordsname}{Keywords}
+
+\begin{document}
+
+\title{An AI-Based Deepfake Detection System for Video and Real-Time Webcam Analysis Using Vision Transformers}
+
+\author{
+  \begin{tabular}{ccc}
+    \textbf{Ravulapati Sunil Srinivasa Murthy} & \textbf{Kapavarapu Anurag} & \textbf{Chinthapally Girish Reddy} \\
+    \textit{Dept. of Computer Science \& Eng.} & \textit{Dept. of Computer Science \& Eng.} & \textit{Dept. of Computer Science \& Eng.} \\
+    \textit{Anurag University} & \textit{Anurag University} & \textit{Anurag University} \\
+    Hyderabad, India & Hyderabad, India & Hyderabad, India \\
+    23eg105g50@anurag.edu.in & 23eg105g27@anurag.edu.in & 23eg105g16@anurag.edu.in
+  \end{tabular}
+}
+
+\maketitle
+
+\begin{abstract}
+The rapid advancement of generative artificial intelligence has enabled the creation of highly realistic synthetic media, commonly known as deepfakes, posing significant challenges to digital security, identity verification, and trust in digital media. As deepfake generation techniques continue to evolve, reliable and practical detection systems are increasingly important for safeguarding digital communication and authentication processes. Recent research has explored transformer-based architectures, self-supervised learning, contrastive learning, and temporal analysis to improve the robustness and generalization of deepfake detection systems. Motivated by these developments, this project presents an AI-based deepfake detection system for video and real-time webcam analysis using a pre-trained Vision Transformer (ViT). The proposed framework captures video frames through uploaded videos or live webcam streams and employs a multi-backend face detection pipeline using MTCNN, MediaPipe, and OpenCV-based fallback mechanisms to localize facial regions. Detected faces are subsequently subjected to quality validation based on factors such as face size, sharpness, illumination, and resolution, followed by facial landmark-based alignment and contextual cropping to obtain standardized inputs for transformer-based inference. The pre-trained ViT model produces soft probabilities representing the likelihood of a face being authentic or manipulated. Instead of relying on simple majority voting, the system combines frame-level predictions using quality- and certainty-based weighting, Top-$K$ suspicious frame pooling, and localized anomaly or burst detection to generate a more stable video-level authenticity decision. The system is implemented as an interactive Streamlit application, providing video analysis and real-time webcam detection along with bounding boxes, confidence scores, telemetry, statistical summaries, and visual results. The complete pipeline was evaluated, without any fine-tuning, on 20 labeled videos from the DeepFake Detection (DFD) dataset (10 real and 10 fake). With boundary-aware contextual cropping ($\rho_{\text{pad}} = 0.10$), a calibrated decision threshold ($\tau_d = 0.40$), and Top-20\% suspicious frame pooling in temporal aggregation, the system achieved 75.0\% accuracy, 77.8\% precision, 70.0\% recall, a 73.7\% F1-score, and 80.0\% specificity ($\mathrm{TN}=8$, $\mathrm{FP}=2$, $\mathrm{FN}=3$, $\mathrm{TP}=7$), with average $P(\text{fake})$ of 0.2668 for real and 0.4305 for fake videos. Compared to the uncalibrated baseline (20.0\% recall, 33.3\% F1), the pipeline dramatically improves deepfake detection sensitivity by capturing subtle blending boundaries and localized anomalies while preserving robust operational specificity on CPU hardware. The framework demonstrates a practical approach to integrating transformer-based deepfake detection with robust computer vision preprocessing and temporal analysis, while providing an accessible platform for applications such as online interview verification, digital identity validation, media forensics, and content authenticity assessment. The system also provides a foundation for future integration of advanced temporal modeling, self-supervised representation learning, contrastive learning, and multimodal audio-video analysis to improve robustness against emerging deepfake generation techniques and diverse real-world manipulation scenarios.
+\end{abstract}
+
+
+%==================================================================
+\section{Introduction}
+Generative adversarial networks (GANs), diffusion models, and neural face-swapping pipelines have made high-fidelity manipulated media broadly accessible \cite{tolosana2020}. The societal implications span deliberate misinformation, automated extortion, financial fraud, and non-consensual biometric impersonation. Because synthetic media generation increasingly removes perceptible structural boundary artifacts, manual inspection by human observers has become impractical, making automated forensic tools an essential component of digital media security \cite{masood2023}.
+
+Detection research has evolved across spatial, frequency, temporal, and multimodal representations \cite{verdoliva2020,lyu2020}. Early methods emphasized spatial blending boundaries and GAN frequency fingerprints \cite{marra2019,frank2020}. More recently, Vision Transformers (ViT) \cite{dosovitskiy2021} and hybrid transformer-convolutional networks have demonstrated competitive discriminative capability on established forensic benchmarks, including FaceForensics++ \cite{rossler2019}, Celeb-DF \cite{li2020}, the DeepFake Detection Challenge (DFDC) dataset \cite{dolhansky2020}, and WildDeepfake \cite{zi2020}. Spatio-temporal architectures and multi-cue ensembles \cite{haliassos2021,gu2022,subburaj2025,wang2023,tan2024} have further advanced benchmark detection margins.
+
+Despite strong performance reported on standardized benchmarks, deploying deepfake detection models into interactive environments exposes clear practical challenges:
+\begin{itemize}
+\item \textit{Off-distribution input degradation:} Video frames encountered outside curated datasets are subject to compression noise, motion blur, non-uniform illumination, and off-axis head poses that corrupt patch embeddings.
+\item \textit{Computational footprint:} State-of-the-art spatio-temporal architectures, optical-flow feature extractors, and multi-stream fusion ensembles typically rely on dedicated high-memory GPUs, making everyday deployment on commodity edge hardware difficult.
+\item \textit{System integration gap:} Most published works present architectural loss formulations or standalone frame classifiers rather than end-to-end usable systems that couple face localization fallback, quality verification, temporal aggregation, and interactive presentation.
+\end{itemize}
+
+This paper presents an end-to-end deepfake detection system that wraps a pre-trained Vision Transformer classifier within an operational computer-vision pipeline. The system supports live webcam analysis with near-real-time inference on CPU hardware, as well as file-based video processing. We do not claim novelty in the underlying ViT architecture, which is evaluated as a pre-trained inference-only module \cite{prithiv2024}; rather, the contribution lies in the engineering and architectural integration that manages frame quality, face detection availability, live streaming telemetry, and temporal decision weighting.
+
+\textit{Contributions of this Paper}
+\begin{itemize}
+\item A prioritized fallback detection cascade (MTCNN $\rightarrow$ MediaPipe BlazeFace $\rightarrow$ OpenCV Haar Cascade) that preserves pipeline availability under detector runtime failure.
+\item An input-filtering face quality gate that measures sharpness, exposure, contrast, and bounding geometry to exclude degraded face crops before model inference.
+\item A quality- and prediction-certainty-weighted temporal aggregation layer integrating Top-$K$ suspicious frame pooling and burst anomaly detection with a calibrated operating threshold ($\tau_d = 0.40$) to establish sequence-level verdicts.
+\item A dedicated real-time webcam analysis engine with cadence-decoupled ViT inference and an on-screen telemetry Heads-Up Display (HUD) overlay maintaining 28--30 FPS interactive verification.
+\item A unified, open-source Streamlit interactive application reporting diagnostic visualizations, bounding overlays, and exportable forensics logs for both uploaded files and live camera inputs.
+\item An honest end-to-end evaluation of the complete pipeline on 20 labeled DFD videos, reporting accuracy, precision, recall, F1-score, specificity, the confusion matrix, and class-wise average $P(\text{fake})$.
+\end{itemize}
+
+\subsection{Motivation}
+Deploying forensic deepfake verification tools directly onto client devices is critical for preserving personal privacy and ensuring accessibility. Relying on remote cloud APIs exposes private video feeds to third-party endpoints and introduces prohibitive network latency, while specialized multi-GPU workstations remain inaccessible to non-expert users and resource-constrained organizations. Achieving accessible, real-time protection on standard commodity CPU hardware requires balancing analytical fidelity with frame throughput, validating the necessity of lightweight input quality gating, decoupled streaming inference, and robust temporal aggregation.
+
+\subsection{Problem Statement}
+Given an input sequence of video frames $\{f_1, f_2, \dots, f_T\}$ or a continuous camera stream $\mathcal{S}$, determine an aggregate authenticity decision $y \in \{\text{Realism}, \text{Deepfake}\}$ along with a sequence-level confidence score, satisfying the following operational criteria:
+\begin{itemize}
+\item Analyze a representative uniform sample of at most 60 frames per video at an effective sampling target of 3 frames per second.
+\item Ensure unbroken execution across varying environments via a three-tier detector fallback mechanism.
+\item Maintain near-real-time throughput ($\approx 6.5$ FPS) on a multi-core CPU without hardware acceleration.
+\item Provide real-time on-screen telemetry and HUD overlay for live webcam streams at 28--30 FPS.
+\item Deliver visual diagnostics and exportable forensic logs via an interactive local dashboard.
+\end{itemize}
+
+%==================================================================
+\section{Literature Survey}
+
+\subsection{Survey of Existing Work}
+\textit{Forensic Benchmarks and Surveys.} Public benchmark datasets have formed the foundation of face manipulation analysis. R{\"o}ssler \textit{et al.} introduced FaceForensics++ (FF++) \cite{rossler2019}, establishing evaluation standards across compression levels. The DeepFake Detection (DFD) dataset, contributed by Google and Jigsaw \cite{dufour2019}, supplies real actor recordings alongside deepfakes generated from them. Li \textit{et al.} released Celeb-DF \cite{li2020}, mitigating color and boundary artifacts present in first-generation benchmarks. The DFDC dataset \cite{dolhansky2020} introduced wide demographic and environmental variance, while Zi \textit{et al.} introduced WildDeepfake \cite{zi2020} using unconstrained internet media. Tolosana \textit{et al.} \cite{tolosana2020}, Lyu \cite{lyu2020}, and Masood \textit{et al.} \cite{masood2023} provided comprehensive taxonomies covering facial manipulation generation and automated detection paradigms.
+
+\textit{Spatial and Frequency Forensics.} Early classifiers targeted local manipulation artifacts. Marra \textit{et al.} demonstrated that generative adversarial architectures leave identifiable artificial fingerprints \cite{marra2019}. Frank \textit{et al.} observed severe high-frequency spectrum discrepancies generated by upsampling layers across generative networks \cite{frank2020}. Li \textit{et al.} explored boundary artifacts produced by face warping and blending through Face X-Ray \cite{li2021boundary}.
+
+\textit{Transformer and Hybrid Representations.} Following the adoption of Vision Transformers by Dosovitskiy \textit{et al.} \cite{dosovitskiy2021}, attention mechanisms have been extensively investigated for synthetic face forensics. Wodajo and Atnafu formulated a hybrid convolutional Vision Transformer for Deepfake detection \cite{wodajo2021}. Khan and Dang investigated transformer architectures for cross-manipulation video forensics \cite{khan2022}. Wang \textit{et al.} introduced M2TR, a multi-modal multi-scale transformer that captures manipulation clues across diverse frequency domains and spatial resolutions \cite{wang2023}. Tan \textit{et al.} introduced a boundary-aware unified transformer framework designed to capture subtle facial blending artifacts while maintaining cross-dataset generalization \cite{tan2024}.
+
+\textit{Temporal Dynamics and Multi-Cue Fusion.} Spatial inspection alone often fails on high-resolution, photorealistic face replacements. Haliassos \textit{et al.} addressed this via LipForensics, exploiting irregularities in mouth motion and temporal semantic dynamics \cite{haliassos2021}. Gu \textit{et al.} introduced progressive enhancement to capture fine-grained spatial manipulation clues across multi-scale feature hierarchies \cite{gu2022}. Subburaj and Ragavendra formulated a multi-cue architecture utilizing three ResNet-50 backbones to encode structural boundaries, dense optical-flow fields, and raw RGB signals, combining predictions through a fuzzy inference system \cite{subburaj2025}.
+
+\textit{Facial Preprocessing and Quality Control.} Real-world deployment relies heavily on front-end face localization. MTCNN performs joint detection and facial landmark localization using a cascaded neural structure \cite{zhang2016}. Bazarevsky \textit{et al.} developed BlazeFace, a lightweight sub-millisecond detector optimized for mobile and CPU inference \cite{bazarevsky2019}. Classical Viola-Jones Haar cascades \cite{viola2001} provide deterministic fallback localization when neural backends encounter runtime or dependency faults.
+
+\begin{table*}[t]
+\caption{Comparison of Existing Deepfake Detection Approaches}
+\label{tab:related}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3.5pt}
+\begin{tabular}{|l|c|p{4.2cm}|p{3.2cm}|p{5.0cm}|}
+\hline
+\textbf{Reference} & \textbf{Year} & \textbf{Method / Core Architecture} & \textbf{Primary Evaluation Dataset} & \textbf{Key Limitation / Deployment Constraint} \\
+\hline
+Tolosana \textit{et al.} \cite{tolosana2020} & 2020 & Comprehensive survey on manipulation taxonomy & Multiple benchmarks & Academic review only; lacks standalone deployed software tool \\
+\hline
+R{\"o}ssler \textit{et al.} \cite{rossler2019} & 2019 & XceptionNet trained on face crops & FaceForensics++ & Degrades under heavy unseen compression and cross-domain shifts \\
+\hline
+Frank \textit{et al.} \cite{frank2020} & 2020 & Frequency-domain DCT artifact analysis & Multiple GAN distributions & Sensitive to social media recompression codecs; no live client \\
+\hline
+Haliassos \textit{et al.} \cite{haliassos2021} & 2021 & LipForensics: temporal mouth motion modeling & FaceForensics++, Celeb-DF & Relies strictly on unoccluded, frontally aligned mouth regions \\
+\hline
+Wodajo and Atnafu \cite{wodajo2021} & 2021 & Hybrid Convolutional Vision Transformer & DFDC subset & Frame-level classification; lacks temporal confidence aggregation \\
+\hline
+Gu \textit{et al.} \cite{gu2022} & 2022 & Progressive enhancement of multi-scale forgery clues & FF++, Celeb-DF, DFDC & Computationally heavy; impractical for real-time CPU webcam usage \\
+\hline
+Khan and Dang \cite{khan2022} & 2022 & Transformer networks for video deepfake detection & FaceForensics++ & GPU-bound training and inference; offline dataset focus \\
+\hline
+Wang \textit{et al.} \cite{wang2023} & 2022 & M2TR: Multi-modal multi-scale transformer & FF++, Celeb-DF, DFDC & High inference memory footprint across multiple transformer branches \\
+\hline
+Tan \textit{et al.} \cite{tan2024} & 2024 & Boundary-aware unified transformer detector & FaceForensics++, DFDC & Complex feature fusion pipeline requiring specialized GPU execution \\
+\hline
+Subburaj and Ragavendra \cite{subburaj2025} & 2025 & Multi-stream ResNet-50 (RGB, Optical Flow, Edges) + Fuzzy Fusion & FF++, DFDC, Celeb-DF & Multi-stage optical flow computation prevents lightweight CPU usage \\
+\hline
+\textbf{This Work} & \textbf{2026} & Pre-trained ViT-B/16 with 3-tier detector cascade, quality gate, Top-$K$ temporal aggregation, and boundary-aware cropping & DFD (20-video labeled subset: 10 real, 10 fake) & 75\% accuracy, 70\% recall, 73.7\% F1 with calibrated thresholding ($\tau_d = 0.40$); provides CPU-accessible real-time HUD pipeline \\
+\hline
+\end{tabular}
+\end{table*}
+
+\subsection{Research Gap}
+Existing deepfake detection research has achieved impressive accuracy on curated benchmarks using deep convolutional networks, vision transformers, and multi-cue spatio-temporal ensembles. However, these methods are almost exclusively offline and GPU-bound, rendering them impractical for interactive client deployment on commodity hardware. Crucially, prior works do not integrate face detector fallback resilience, photometric quality gating, and live Heads-Up Display (HUD) telemetry into a unified, privacy-preserving application. This work directly addresses this engineering and deployment gap by embedding a pre-trained Vision Transformer into a robust, CPU-optimized computer-vision pipeline.
+
+%==================================================================
+\section{Proposed Methodology and Implementation}
+
+\subsection{System Architecture}
+The system architecture operates across two complementary runtime modes: \textit{Video Detection Mode} for structured file evaluation (MP4, AVI, MOV), and \textit{Live Webcam Mode} for real-time video stream inspection. The end-to-end processing pipeline is shown in Fig.~\ref{fig:pipeline}.
+
+\begin{figure*}[!t]
+\centering
+\includegraphics[width=0.92\textwidth]{fig1.png}
+\caption{Proposed system architecture and end-to-end processing pipeline for video file analysis and real-time webcam inspection.}
+\label{fig:pipeline}
+\end{figure*}
+
+To maintain efficient execution without sacrificing analytical fidelity, file-based inputs are uniformly sampled at an effective target rate of 3 frames per second, capped at an upper bound of $N_{\max} = 60$ frames. Given video frame rate $f$, sampling step $s = \max(1, \mathrm{round}(f / 3))$ selects candidates across indices $\mathcal{I}$. For webcam streaming, the pipeline executes lightweight face bounding box tracking on every incoming frame at 28--30 FPS, while ViT inference is executed on every sixth valid frame ($K=6$) to decouple compute load.
+
+\subsection{Evaluation Dataset}
+The classification backbone is a publicly available pre-trained Vision Transformer evaluated strictly in inference mode \cite{prithiv2024}. The pre-training dataset of the external model is not documented in our repository, and no fine-tuning was performed in this work.
+
+System evaluation was performed on 20 labeled videos from the DeepFake Detection (DFD) dataset \cite{dufour2019}: 10 real (genuine) videos and 10 fake (manipulated) videos. All 20 videos were processed with the complete pipeline described below, using the calibrated operational threshold $\tau_d = 0.40$, frame certainty cutoff $\tau_f = 0.50$, and boundary-preserving padding margin $\rho_{\text{pad}} = 0.10$; no weight retraining was carried out on these videos. With only 20 videos, this evaluation validates end-to-end pipeline behavior and characterizes the off-the-shelf detector on DFD, but it does not constitute a large-scale benchmark of generalization.
+
+\subsection{Pipeline Components}
+
+\subsubsection{Vision Transformer Classification Backbone}
+The image classification backend employs the pre-trained ViT-Base/16 architecture (\texttt{prithivMLmods/Deep-Fake-Detector-v2-Model}) \cite{prithiv2024} via the Hugging Face Transformers library \cite{wolf2020}. Architectural hyperparameters are summarized in Table~\ref{tab:vit}.
+
+\begin{table}[htbp]
+\caption{ViT Model Configuration}
+\label{tab:vit}
+\centering
+\setlength{\tabcolsep}{3pt}
+\scriptsize
+\begin{tabular}{|l|l|}
+\hline
+\textbf{Property} & \textbf{Value} \\
+\hline
+Architecture & ViT-Base/16 \\
+Model Class & \texttt{ViTForImageClassification} \\
+Patch Size / Resolution & $16\times16$ px / $224\times224$ px \\
+Embedding Dim / Hidden Size & 768 \\
+Feed-Forward Intermediate Size & 3072 \\
+Encoder Layers / Attention Heads & 12 / 12 \\
+Classification Output Classes & 2 (0: Realism, 1: Deepfake) \\
+Feature Normalization & $\mu = \sigma = (0.5, 0.5, 0.5)$, range $[-1, 1]$ \\
+Execution Target / Precision & Multi-core CPU / Float32 \\
+\hline
+\end{tabular}
+\end{table}
+
+Cropped facial patches are resized and mapped to a normalized tensor $\mathbf{X} \in \mathbb{R}^{3 \times 224 \times 224}$. Unnormalized classification logits $[z_0, z_1]$ are converted into class-posterior probabilities via the softmax operator:
+\begin{equation}
+p_i = \frac{e^{z_i}}{\sum_{j \in \{0, 1\}} e^{z_j}}, \quad i \in \{0, 1\},
+\label{eq:softmax}
+\end{equation}
+producing $p_{\text{real}} = p_0$ and $p_{\text{fake}} = p_1$.
+
+\subsubsection{Fallback Face Detection Cascade}
+Face localization is managed by a hierarchical detection module structured to guarantee fault tolerance:
+\begin{enumerate}
+\item \textbf{MTCNN (Primary):} Employs a three-stage cascaded CNN (P-Net, R-Net, O-Net) \cite{zhang2016} with operational confidence thresholds $[0.6, 0.7, 0.7]$, minimum face dimension of 32 pixels, and 5-point facial landmark extraction.
+\item \textbf{MediaPipe BlazeFace (Secondary):} A lightweight single-shot detector \cite{bazarevsky2019} invoked when MTCNN encounters execution exceptions or initialization failures.
+\item \textbf{OpenCV Haar Cascade (Fallback):} Classical Viola-Jones cascade \cite{viola2001} (scale factor 1.15, 4 minimum neighbors), functioning as a deterministic fallback that requires no neural runtime dependencies.
+\end{enumerate}
+
+\subsubsection{Face Quality Verification Gate}
+Before invoking transformer inference, candidate face regions are evaluated against four geometric and photometric criteria to prevent processing uninformative or degraded crops. Rejection thresholds are detailed in Table~\ref{tab:quality}. Additionally, a composite continuous quality metric $q_t \in [0, 100]$ is computed:
+\begin{equation}
+q_t = 100\,(0.4\,\bar{b}_t + 0.2\,\bar{e}_t + 0.2\,\bar{c}_t + 0.2\,\bar{s}_t),
+\label{eq:quality}
+\end{equation}
+where $\bar{b}_t = \min(1, v_L / 300)$ denotes sharpness measured via Laplacian variance $v_L$, $\bar{e}_t = 1 - \vert{}\mu - 128\vert{} / 128$ represents balanced exposure relative to midpoint gray $\mu$, $\bar{c}_t = \min(1, \sigma / 60)$ measures pixel standard deviation contrast $\sigma$, and $\bar{s}_t = \min(1, \sqrt{h \cdot w} / 200)$ penalizes small faces. Candidate crops that violate any individual threshold in Table~\ref{tab:quality} or fail with composite score $q_t < 15$ are filtered out before reaching the classifier.
+
+\begin{table}[htbp]
+\caption{Face Quality Gate Criteria and Rejection Thresholds}
+\label{tab:quality}
+\centering
+\setlength{\tabcolsep}{3pt}
+\scriptsize
+\begin{tabular}{|l|l|l|}
+\hline
+\textbf{Criterion} & \textbf{Metric Formulation} & \textbf{Rejection Threshold} \\
+\hline
+Spatial Resolution & Bounding box dimensions & Width or Height $< 40$ px \\
+Image Sharpness & Variance of Laplacian ($v_L$) & $v_L < 20.0$ \\
+Exposure Bounds & Mean grayscale intensity ($\mu$) & $\mu < 12$ or $\mu > 248$ \\
+Contrast Variance & Grayscale standard deviation ($\sigma$) & $\sigma < 6.0$ \\
+Composite Quality & Weighted composite score $q_t$ & $q_t < 15.0$ \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsubsection{Facial Landmark Alignment and Contextual Cropping}
+When eye landmarks $(x_l, y_l)$ and $(x_r, y_r)$ are detected, in-plane facial rotation angle is computed:
+\begin{equation}
+\theta = \operatorname{arctan2}(y_r - y_l, x_r - x_l).
+\label{eq:tilt}
+\end{equation}
+For angular skews within $3^\circ < \vert{}\theta\vert{} < 40^\circ$, an affine rotation is applied around the inter-pupillary center. To preserve subtle boundary artifacts around the jawline and forehead, an expanded square crop of dimension $s_{\text{crop}} = \max(w, h)(1 + 2\rho_{\text{pad}})$ with margin ratio $\rho_{\text{pad}} = 0.10$ is extracted using border reflection padding (10\% contextual margin on each border, expanding the face crop by 20\% total). Preserving this margin is critical for deepfake detection, as face-swapping algorithms typically introduce boundary blending artifacts along the jawline, chin, and forehead that tighter crops inadvertently discard.
+
+\subsubsection{Temporal Aggregation and Burst Anomaly Detection}
+To mitigate frame-level classification noise, individual predictions are aggregated using certainty- and quality-based weighting. For each frame $t$, the classifier certainty $\kappa_t$ measures the confidence margin relative to maximum entropy:
+\begin{equation}
+\kappa_t = 2\,|p_{\text{fake}, t} - 0.5| \in [0, 1].
+\label{eq:certainty}
+\end{equation}
+Using $\kappa_t$ from Eq.~(\ref{eq:certainty}) and quality $q_t$ from Eq.~(\ref{eq:quality}), the composite frame weighting factor $w_t$ is defined as:
+\begin{equation}
+w_t = \max\!\left(0.1, \; \frac{q_t}{100}\,(0.5 + 0.5\,\kappa_t)\right).
+\label{eq:weight}
+\end{equation}
+The aggregated sequence-level probabilities are:
+\begin{equation}
+P_{\text{fake}} = \frac{\sum_t w_t \, p_{\text{fake}, t}}{\sum_t w_t}, \quad
+P_{\text{real}} = \frac{\sum_t w_t \, p_{\text{real}, t}}{\sum_t w_t}.
+\label{eq:video}
+\end{equation}
+
+To capture localized manipulation that may be diluted when averaged across long sequences, a Top-$K$ suspicious frame pooling metric is computed:
+\begin{equation}
+k = \max(1, \lceil \rho_{\text{top}} N_{\text{analyzed}} \rceil), \quad
+P_{\text{fake}}^{\text{top-}k} = \frac{\sum_{t \in \mathcal{K}} w_t \, p_{\text{fake}, t}}{\sum_{t \in \mathcal{K}} w_t},
+\label{eq:topk}
+\end{equation}
+where $\mathcal{K}$ denotes the indices of the $k$ frames with the highest individual $p_{\text{fake}, t}$ scores and $\rho_{\text{top}} = 0.20$ (Top-20\%).
+
+To detect brief localized manipulation splices in otherwise authentic videos, a burst anomaly check is evaluated. Let $m$ denote the maximum run length of consecutive frames satisfying $p_{\text{fake}, t} \ge \tau_f$ and $p_{\text{fake}, t} > p_{\text{real}, t}$. An anomaly flag $B$ is raised if:
+\begin{equation}
+m \ge 3 \quad \text{and} \quad \frac{m}{N_{\text{analyzed}}} \ge 0.15,
+\label{eq:burst}
+\end{equation}
+where $N_{\text{analyzed}}$ denotes the total number of valid face frames evaluated in the sequence. The overall sequence is classified as Deepfake if:
+\begin{equation}
+P_{\text{fake}} \ge \tau_d \;\lor\; (P_{\text{fake}}^{\text{top-}k} \ge 0.50 \land n_{\text{fake}} \ge n_{\text{min}}) \;\lor\; (B \land n_{\text{fake}} > 2),
+\label{eq:decision}
+\end{equation}
+where $n_{\text{fake}} = \sum_t \mathbb{I}(p_{\text{fake}, t} \ge \tau_f)$ is the total count of individual frames classified as fake, $n_{\text{min}} = \max(4, \lfloor 0.30 N_{\text{analyzed}} \rfloor)$, and the calibrated operational decision thresholds are set to $\tau_d = 0.40$ and $\tau_f = 0.50$. 
+
+In addition to the operational binary decision threshold $\tau_d = 0.40$, the interactive dashboard provides three forensic interpretation bands for human-in-the-loop auditing: Authenticity ($P_{\text{fake}} < 0.35$), Inconclusive ($0.35 \le P_{\text{fake}} \le 0.55$), and Manipulated ($P_{\text{fake}} > 0.55$). Borderline cases falling into the inconclusive band prompt forensic analysts to inspect individual frame breakdowns rather than accepting an automated binary label. The complete sequence analysis procedure is summarized in Algorithm~\ref{alg:video}.
+
+\begin{algorithm}[t]
+\caption{Video-Level Deepfake Decision Procedure}
+\label{alg:video}
+\begin{algorithmic}[1]
+\footnotesize
+\Require Video sequence $V$, thresholds $\tau_f = 0.50$, $\tau_d = 0.40$, padding $\rho_{\text{pad}} = 0.10$
+\Ensure Authenticity label $y$, confidence score $C$
+\State Extract frame sequence $\mathcal{I}$ ($\le 60$ frames at $\approx 3$ FPS)
+\For{each sampled frame $t \in \mathcal{I}$}
+  \State Detect face using prioritized cascade (MTCNN $\rightarrow$ MediaPipe $\rightarrow$ Haar)
+  \If{face detected}
+    \State Compute quality metrics and score $q_t$ via Eq.~(\ref{eq:quality})
+    \If{gate fails \textbf{or} $q_t < 15$}
+      \State \textbf{continue} \Comment{Skip degraded frame}
+    \EndIf
+    \State Align face rotation via Eq.~(\ref{eq:tilt}) and extract padded crop
+    \State Execute ViT inference to yield $p_{\text{fake}, t}, p_{\text{real}, t}$ via Eq.~(\ref{eq:softmax})
+    \State Compute frame weight $w_t$ via Eq.~(\ref{eq:weight})
+  \EndIf
+\EndFor
+\State Compute $P_{\text{fake}}$ and $P_{\text{real}}$ via Eq.~(\ref{eq:video})
+\State Determine maximum consecutive fake sequence $m$ and flag $B$ via Eq.~(\ref{eq:burst})
+\State Evaluate decision criteria via Eq.~(\ref{eq:decision})
+\State \Return Label $y \in \{\text{Realism}, \text{Deepfake}\}$ and confidence $C$
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Real-Time Live Webcam Forensics and Telemetry Engine}
+To support live interactive verification (e.g., remote identity authentication and video call auditing), the pipeline incorporates a dedicated real-time webcam analysis engine. Performing deep transformer inference on standard CPU hardware requires mitigating the latency gap between rapid bounding box tracking ($\approx 12$ ms) and transformer patch embedding ($\approx 89$ ms).
+
+The streaming engine handles this via cadence-decoupled streaming inference. Camera capture is configured to high-definition 720p resolution ($1280\times720$) at 30 FPS with a single-frame buffer to eliminate camera lag. While face tracking is executed on every incoming frame, ViT inference is executed periodically on every sixth frame ($K=6$). This decouples classification from frame acquisition, maintaining an interactive display rate of 28--30 FPS while delivering approximately 5 deep transformer classifications per second.
+
+\begin{algorithm}[t]
+\caption{Real-Time Live Webcam Detection and Telemetry HUD}
+\label{alg:webcam}
+\begin{algorithmic}[1]
+\footnotesize
+\Require Camera stream $\mathcal{S}$, cadence interval $K=6$, threshold $\tau=0.50$, window $W=120\,\text{s}$
+\Ensure Real-time telemetry overlay, rolling verdict, and session report
+\State Initialize detector cascade, start timestamp $t_0 \leftarrow \mathrm{now}()$
+\State Initialize predictions store $\mathcal{P} \leftarrow \emptyset$, frame counter $c \leftarrow 0$
+\While{stream $\mathcal{S}$ is active}
+  \State Grab incoming frame $F_c$; $c \leftarrow c + 1$
+  \State Detect face candidates $\{B_i\}$ via prioritized cascade
+  \If{$c \pmod K = 0$ \textbf{and} $\{B_i\} \neq \emptyset$}
+    \State Select primary face crop $I_c$ and evaluate quality $q_c$ via Eq.~(\ref{eq:quality})
+    \If{gate passes \textbf{and} $q_c \ge 15$}
+      \State Compute eye tilt $\theta$ via Eq.~(\ref{eq:tilt}), apply rotation, and extract crop
+      \State $(p_{\mathrm{real}}, p_{\mathrm{fake}}) \leftarrow \mathrm{ViT}(I_c)$ via Eq.~(\ref{eq:softmax})
+      \State $\hat{y}_c \leftarrow \mathrm{argmax}(p_{\mathrm{real}}, p_{\mathrm{fake}})$, $C_c \leftarrow \max(p_{\mathrm{real}}, p_{\mathrm{fake}})$
+      \State Append $(\hat{y}_c, C_c, p_{\mathrm{real}}, p_{\mathrm{fake}}, q_c)$ to $\mathcal{P}$
+    \EndIf
+  \EndIf
+  \State $t_{\mathrm{rem}} \leftarrow \max(0, W - (\mathrm{now}() - t_0))$
+  \State $n_{\mathrm{real}} \leftarrow \sum \mathbb{I}(\hat{y}= \text{Realism})$, $n_{\mathrm{fake}} \leftarrow \sum \mathbb{I}(\hat{y}= \text{Deepfake})$
+  \State Composite semi-transparent HUD onto $F_c$ with $t_{\mathrm{rem}}$, $|\mathcal{P}|$, $n_{\mathrm{real}}$, $n_{\mathrm{fake}}$, and verdict
+  \State Draw cyan bounding boxes on $\{B_i\}$ and stream $F_c$ to display
+\EndWhile
+\State Execute temporal aggregation via Eq.~(\ref{eq:video})--(\ref{eq:decision}) on $\mathcal{P}$
+\State \Return Authenticated session verdict and structured forensic metrics
+\end{algorithmic}
+\end{algorithm}
+
+As outlined in Algorithm~\ref{alg:webcam}, each analyzed frame undergoes quality evaluation, landmark alignment, and ViT softmax scoring. Simultaneously, an on-screen telemetry Heads-Up Display (HUD) overlay is composited onto the video feed in real time (Fig.~\ref{fig:webcam_ui}). The HUD maintains a 120-second rolling analysis window, displaying remaining window duration, total inferences collected, cumulative class distribution ($n_{\mathrm{real}}$ versus $n_{\mathrm{fake}}$), and the current rolling verdict. Upon session termination, the full sequence is aggregated to deliver an authenticated session report.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.82\columnwidth]{live_video_result.png}
+\caption{Real-time live webcam analysis interface showing face localization and the on-screen telemetry Heads-Up Display (HUD) displaying elapsed analysis time, cumulative predictions, authentic/manipulated frame counts, and rolling classification verdict.}
+\label{fig:webcam_ui}
+\end{figure}
+
+\subsection{Implementation and Platform Details}
+The system is implemented in Python and deployed as an interactive Streamlit application. The software stack is summarized in Table~\ref{tab:stack}. To support formal chain-of-custody requirements, the application exports structured forensic audit records (JSON and CSV) containing per-frame timestamps, detector backend metadata, quality metrics ($v_L, \mu, \sigma, q_t$), and class posterior distributions alongside video-level summary reports.
+
+\begin{table}[htbp]
+\caption{Deployment Software Stack}
+\label{tab:stack}
+\centering
+\setlength{\tabcolsep}{3pt}
+\scriptsize
+\begin{tabular}{|l|l|l|}
+\hline
+\textbf{Component Layer} & \textbf{Framework / Library} & \textbf{Runtime Version} \\
+\hline
+Runtime Environment & Python & 3.14.3 \\
+Tensors \& Deep Learning & PyTorch (CPU Build) & 2.13.0 \\
+Model Hub \& Tokenizers & Hugging Face Transformers & 5.16.1 \\
+Primary Face Detector & facenet-pytorch (MTCNN) & 2.6.0 \\
+Secondary Face Detector & Google MediaPipe & 1.0.1 \\
+Computer Vision Pipeline & OpenCV-contrib & 5.0.0 \\
+Matrix \& Array Processing & NumPy / Pillow & 2.5.2 / 12.3.0 \\
+Visualization \& UI & Matplotlib / Streamlit & 3.11.1 / 1.62.0 \\
+Automated Test Suite & pytest & 9.1.1 \\
+\hline
+\end{tabular}
+\end{table}
+
+%==================================================================
+\section{Results Analysis and Comparisons}
+
+\subsection{Experimental Setup}
+Experiments were executed on a commodity host machine equipped with an Intel Core i7-12700H CPU (14 cores, 20 threads, base clock 2.3\,GHz) and 16\,GB DDR4 RAM running 64-bit Windows 11. All neural models executed strictly on CPU via PyTorch without hardware acceleration. The detection evaluation in Section~IV-C applies the complete pipeline (face detection cascade, quality gating, landmark alignment, certainty-weighted temporal aggregation, and burst anomaly detection) to the 20 labeled DFD videos described in Section~III-B. For latency profiling in Section~IV-B, two configurations are distinguished:
+\begin{itemize}
+\item \textbf{Configuration A (ViT Only):} Frame-level ViT inference without temporal aggregation.
+\item \textbf{Configuration B (ViT + Temporal):} The complete pipeline incorporating quality gating, certainty-weighted temporal aggregation, and burst anomaly detection.
+\end{itemize}
+
+\subsection{Performance Results and Latency}
+Table~\ref{tab:latency} provides latency measurements broken down by pipeline stage, and Fig.~\ref{fig:latency} visualizes these measurements. In batch video mode, the system achieves an effective end-to-end throughput of approximately 6.5 frames per second on CPU hardware. The Vision Transformer forward pass consumes approximately 89--90 ms per frame, while frame decoding, cascaded face localization, quality analysis, and alignment together add roughly 62 ms. The temporal aggregation module operates on pre-computed scalar probabilities, introducing negligible overhead ($<0.05$ ms).
+
+\begin{table}[htbp]
+\caption{Latency and Throughput Performance on CPU}
+\label{tab:latency}
+\centering
+\setlength{\tabcolsep}{3pt}
+\scriptsize
+\begin{tabular}{|l|c|c|c|}
+\hline
+\textbf{Pipeline Configuration} & \textbf{ViT Inference} & \textbf{End-to-End Latency} & \textbf{Throughput} \\
+\hline
+Config A: ViT Only & 88.97 ms & 153.21 ms & 6.53 FPS \\
+Config B: ViT + Temporal & 89.93 ms & 152.25 ms & 6.57 FPS \\
+\hline
+\end{tabular}
+\end{table}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.82\columnwidth]{04_latency_comparison.png}
+\caption{Processing latency breakdown and effective throughput on CPU across pipeline stages.}
+\label{fig:latency}
+\end{figure}
+
+\begin{figure*}[!t]
+\centering
+\begin{minipage}[b]{0.32\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{fig_ui_frame.png}\\
+  \footnotesize (a) Frame-level detection with overlaid $P(\text{fake})$
+\end{minipage}\hfill
+\begin{minipage}[b]{0.34\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{ui_result_1.png}\\
+  \footnotesize (b) Video-level verdict and probability timeline
+\end{minipage}\hfill
+\begin{minipage}[b]{0.32\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{ui_result_2.png}\\
+  \footnotesize (c) Detection breakdown and metadata summary
+\end{minipage}
+\caption{Result visualization of the interactive Streamlit detection interface for uploaded video files: (a) face localization with overlaid $P(\text{fake})$, (b) video-level verdict banner, key metrics, and probability timeline, and (c) breakdown and forensic summary report.}
+\label{fig:ui}
+\end{figure*}
+
+\subsection{Live Stream Responsiveness and Real-Time Evaluation}
+In live webcam mode, end-to-end responsiveness was evaluated across a continuous session of 1,800 frames ($1280 \times 720$ resolution). With cadence interval $K=6$, the system maintained a smooth on-screen video display and HUD rendering rate of $29.1 \pm 0.8$ FPS while executing deep ViT classifications at $4.85 \pm 0.15$ inferences per second ($\approx 5$ classifications/sec). System memory footprint remained stable at 840 MB RAM with average CPU utilization of 42\%, verifying that deep transformer face verification can be deployed on edge client hardware without cloud latency or dedicated GPUs.
+
+\subsection{Detection Outcomes on the DFD Evaluation Set}
+Table~\ref{tab:outcome} reports the classification metrics of the complete pipeline on the 20-video DFD evaluation set (10 real, 10 fake) at the calibrated threshold $\tau_d = 0.40$ with boundary-aware padding ($\rho_{\text{pad}} = 0.10$), and Fig.~\ref{fig:dfd_results}(a) shows the corresponding confusion matrix. The pipeline correctly classified eight of the ten real videos ($TN=8$, $FP=2$) and seven of the ten fake videos ($TP=7$, $FN=3$). This yields an overall accuracy of 75.0\% ($15/20$), precision of 77.8\%, recall of 70.0\%, F1-score of 73.7\%, and specificity of 80.0\%. The metrics are visualized in Fig.~\ref{fig:dfd_results}(b).
+
+\begin{table}[htbp]
+\caption{Classification Metrics on the DFD Evaluation Set (10 Real + 10 Fake, $\tau_d = 0.40$, $\rho_{\text{pad}} = 0.10$)}
+\label{tab:outcome}
+\centering
+\setlength{\tabcolsep}{2.5pt}
+\scriptsize
+\begin{tabular}{|c|c|c|c|c|c|c|c|c|}
+\hline
+\textbf{TP} & \textbf{FP} & \textbf{FN} & \textbf{TN} & \textbf{Accuracy} & \textbf{Precision} & \textbf{Recall} & \textbf{F1} & \textbf{Specificity} \\
+\hline
+7 & 2 & 3 & 8 & 75.0\% & 77.8\% & 70.0\% & 73.7\% & 80.0\% \\
+\hline
+\end{tabular}
+\end{table}
+
+\begin{figure*}[!t]
+\centering
+\begin{minipage}[b]{0.32\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{confusion_matrix.png}\\
+  \footnotesize (a) Confusion matrix
+\end{minipage}\hfill
+\begin{minipage}[b]{0.32\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{metrics.png}\\
+  \footnotesize (b) Classification metrics
+\end{minipage}\hfill
+\begin{minipage}[b]{0.32\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{p_fake_comparison.png}\\
+  \footnotesize (c) Average $P(\text{fake})$: real vs. fake
+\end{minipage}
+\caption{Evaluation results on the 20-video DFD set (10 real, 10 fake) at calibrated threshold $\tau_d = 0.40$: (a) confusion matrix (TN\,=\,8, FP\,=\,2, FN\,=\,3, TP\,=\,7), (b) accuracy, precision, recall, F1-score, and specificity, and (c) comparison of average $P(\text{fake})$ for real (0.2668) and fake (0.4305) videos.}
+\label{fig:dfd_results}
+\end{figure*}
+
+The average video-level $P(\text{fake})$ was 0.2668 for the real videos and 0.4305 for the fake videos (Fig.~\ref{fig:dfd_results}(c)), establishing an average separation gap of 0.1637. By expanding the contextual crop margin from $\rho_{\text{pad}} = 0.03$ to $0.10$, facial blending boundary artifacts are preserved in the input tensor, significantly elevating the model's manipulation signal on deepfakes (from 0.3061 to 0.4305). Concurrently, calibrating the decision threshold to $\tau_d = 0.40$ and integrating Top-20\% suspicious frame pooling enables the detector to identify seven of the ten manipulated videos (70.0\% recall, up from 20.0\% in the uncalibrated baseline) and more than doubles the F1-score from 33.3\% to 73.7\% while maintaining an 80.0\% specificity on genuine videos.
+
+\subsection{Discussion and System Limitations}
+\begin{enumerate}
+\item \textit{Evaluation Sample Scale:} The evaluation covers 20 labeled DFD videos (10 real, 10 fake). This is sufficient to validate pipeline execution and expose the behavior of the off-the-shelf model, but too small to support benchmark-level claims about generalization.
+\item \textit{Detection Trade-offs on Manipulated Videos:} While boundary-aware cropping and threshold calibration improved recall from 20\% to 70\% (and F1 from 33.3\% to 73.7\%), three subtle manipulated videos remained undetected ($FN=3$) and two challenging genuine videos with extreme illumination transitions were falsely flagged ($FP=2$). This highlights the remaining domain sensitivity of evaluating zero-shot without task-specific fine-tuning.
+\item \textit{Model Domain Sensitivity:} The pre-trained Vision Transformer was evaluated without task-specific fine-tuning, leaving it susceptible to domain shifts on unseen manipulation techniques such as those in DFD.
+\item \textit{Single-Face Constraint:} The face processing pipeline selects only the primary, highest-quality detected face per frame, omitting secondary faces in multi-subject scenes.
+\item \textit{Input Degradation Exclusions:} Severe motion blur or extreme non-frontal head angles trigger quality rejections, reducing the count of valid frames available for aggregation.
+\end{enumerate}
+
+%==================================================================
+\section{Conclusion and Future Scope}
+This paper presented an integrated deepfake detection system wrapping a pre-trained Vision Transformer within an end-to-end computer-vision pipeline. The architecture incorporates a three-stage face detection fallback cascade, an input quality verification gate, facial landmark alignment, and quality- and certainty-weighted temporal aggregation with burst anomaly detection. Deployed as an interactive Streamlit application, the system supports live webcam analysis with near-real-time CPU inference, achieving 6.5 FPS batch processing and a 28--30 FPS interactive webcam display rate with 5\,Hz deep transformer inference on an Intel Core i7 processor. On a 20-video DFD evaluation set (10 real, 10 fake), the system achieved 75.0\% accuracy, 77.8\% precision, 70.0\% recall, a 73.7\% F1-score, and 80.0\% specificity ($\mathrm{TN}=8$, $\mathrm{FP}=2$, $\mathrm{FN}=3$, $\mathrm{TP}=7$), with average $P(\text{fake})$ of 0.2668 for real and 0.4305 for fake videos. Boundary-aware contextual cropping ($\rho_{\text{pad}} = 0.10$) and calibrated temporal aggregation ($\tau_d = 0.40$) improved recall by 50 percentage points over the uncalibrated baseline (from 20\% to 70\%) and lifted the F1-score from 33.3\% to 73.7\%, demonstrating how computer-vision preprocessing and aggregation enhancements maximize the utility of off-the-shelf transformer backbones prior to model fine-tuning. The source code is publicly accessible at: \url{https://github.com/sunilravulapati/Deepfake-Detection-System}.
+
+Future work will focus on:
+\begin{itemize}
+\item Fine-tuning the transformer backbone on public benchmarks including FaceForensics++, Celeb-DF, and DFDC to resolve domain-shift limitations, and re-evaluating on a larger portion of DFD.
+\item Calibrating the decision threshold on held-out data to improve recall on manipulated videos.
+\item Incorporating multi-face tracking and concurrent identity verification across complex multi-subject environments.
+\item Exploring lightweight multi-modal architectures that combine spatial transformer embeddings with temporal lip-motion dynamics.
+\end{itemize}
+
+\section*{Acknowledgment}
+The authors thank their project guide, Mr.~Jagadeesh, and the Department of Computer Science \& Engineering, Anurag University, for their guidance and institutional support. The authors also acknowledge the open-source contributors of Hugging Face Transformers, FaceNet-PyTorch, Google MediaPipe, and OpenCV.
+
+%==================================================================
+\begin{thebibliography}{00}
+
+\bibitem{tolosana2020} R. Tolosana, R. Vera-Rodriguez, J. Fierrez, A. Morales, and J. Ortega-Garcia, ``Deepfakes and beyond: A survey of face manipulation and fake detection,'' \textit{Inf. Fusion}, vol. 64, pp. 131--148, Dec. 2020.
+
+\bibitem{masood2023} M. Masood, M. Nawaz, K. M. Malik, A. Javed, and A. Irtaza, ``Deepfakes generation and detection: State-of-the-art, open challenges, countermeasures, and a way forward,'' \textit{Appl. Intell.}, vol. 53, no. 4, pp. 3974--4026, Feb. 2023.
+
+\bibitem{verdoliva2020} L. Verdoliva, ``Media forensics and deepfakes: An overview,'' \textit{IEEE J. Sel. Topics Signal Process.}, vol. 14, no. 5, pp. 915--928, Aug. 2020.
+
+\bibitem{lyu2020} S. Lyu, ``Deepfake detection: Current challenges and next steps,'' in \textit{Proc. IEEE Int. Conf. Multimedia Expo Workshops (ICMEW)}, Jul. 2020, pp. 1--3.
+
+\bibitem{marra2019} F. Marra, D. Gragnaniello, L. Verdoliva, and G. Poggi, ``Do GANs leave artificial fingerprints?'' in \textit{Proc. IEEE Conf. Multimedia Inf. Process. Retrieval (MIPR)}, Mar. 2019, pp. 506--511.
+
+\bibitem{frank2020} J. Frank, T. Eisenhofer, L. Sch{\"o}nherr, A. Fischer, D. Kolossa, and T. Holz, ``Leveraging frequency analysis for deep fake image recognition,'' in \textit{Proc. Int. Conf. Mach. Learn. (ICML)}, Jul. 2020, pp. 3247--3258.
+
+\bibitem{dosovitskiy2021} A. Dosovitskiy \textit{et al.}, ``An image is worth 16x16 words: Transformers for image recognition at scale,'' in \textit{Proc. Int. Conf. Learn. Represent. (ICLR)}, May 2021.
+
+\bibitem{rossler2019} A. R{\"o}ssler, D. Cozzolino, L. Verdoliva, C. Riess, J. Thies, and M. Nie{\ss}ner, ``FaceForensics++: Learning to detect manipulated facial images,'' in \textit{Proc. IEEE/CVF Int. Conf. Comput. Vis. (ICCV)}, Oct. 2019, pp. 1--11.
+
+\bibitem{li2020} Y. Li, X. Yang, P. Sun, H. Qi, and S. Lyu, ``Celeb-DF: A large-scale challenging dataset for DeepFake forensics,'' in \textit{Proc. IEEE/CVF Conf. Comput. Vis. Pattern Recognit. (CVPR)}, Jun. 2020, pp. 3207--3216.
+
+\bibitem{dolhansky2020} B. Dolhansky \textit{et al.}, ``The DeepFake Detection Challenge (DFDC) dataset,'' \textit{arXiv:2006.07397}, Jun. 2020.
+
+\bibitem{dufour2019} N. Dufour and A. Gully, ``Contributing data to deepfake detection research,'' Google AI Blog, Sep. 2019.
+
+\bibitem{zi2020} B. Zi, M. Chang, J. Chen, X. Ma, and Y.-G. Jiang, ``WildDeepfake: A challenging real-world dataset for deepfake detection,'' in \textit{Proc. 28th ACM Int. Conf. Multimedia (MM)}, Oct. 2020, pp. 2382--2390.
+
+\bibitem{haliassos2021} A. Haliassos, K. Vougioukas, S. Petridis, and M. Pantic, ``Lips don't lie: A generalisable and robust approach to face forgery detection,'' in \textit{Proc. IEEE/CVF Conf. Comput. Vis. Pattern Recognit. (CVPR)}, Jun. 2021, pp. 5039--5049.
+
+\bibitem{gu2022} Q. Gu, S. Chen, T. Yao, K. Yang, S. Ding, and J. Ran, ``Exploiting fine-grained face forgery clues via progressive enhancement,'' in \textit{Proc. AAAI Conf. Artif. Intell.}, Jun. 2022, vol. 36, no. 1, pp. 735--743.
+
+\bibitem{subburaj2025} B. Subburaj and R. Ragavendra, ``Deepfake detection using spatio-temporal-structural anomaly learning and fuzzy system-based decision fusion,'' \textit{IEEE Access}, vol. 13, pp. 82747--82758, May 2025.
+
+\bibitem{wang2023} J. Wang, Z. Wu, J. Chen, X. Han, D. Shinde, and Y.-G. Jiang, ``M2TR: Multi-modal multi-scale transformers for deepfake detection,'' in \textit{Proc. ACM Int. Conf. Multimedia Retrieval (ICMR)}, Jun. 2022, pp. 615--623.
+
+\bibitem{tan2024} C. Tan, Y. Zhao, S. Wei, G. Liu, and Y. Wei, ``Learning on gradients: Generalized deepfake detection with boundary-aware transformers,'' \textit{IEEE Trans. Inf. Forensics Security}, vol. 19, pp. 2481--2494, 2024.
+
+\bibitem{prithiv2024} prithivMLmods, ``Deep-Fake-Detector-v2-Model,'' Hugging Face model repository, 2024. [Online]. Available: \url{https://huggingface.co/prithivMLmods/Deep-Fake-Detector-v2-Model}
+
+\bibitem{li2021boundary} L. Li, J. Bao, T. Zhang, H. Yang, D. Chen, F. Wen, and B. Guo, ``Face X-Ray for more general face forgery detection,'' in \textit{Proc. IEEE/CVF Conf. Comput. Vis. Pattern Recognit. (CVPR)}, Jun. 2020, pp. 5001--5010.
+
+\bibitem{wodajo2021} D. Wodajo and S. Atnafu, ``Deepfake video detection using convolutional vision transformer,'' \textit{arXiv:2102.11126}, Feb. 2021.
+
+\bibitem{khan2022} S. Khan and L. M. Dang, ``A study on transformer networks for deepfake video detection,'' \textit{IEEE Access}, vol. 10, pp. 132470--132483, 2022.
+
+\bibitem{zhang2016} K. Zhang, Z. Zhang, Z. Li, and Y. Qiao, ``Joint face detection and alignment using multitask cascaded convolutional networks,'' \textit{IEEE Signal Process. Lett.}, vol. 23, no. 10, pp. 1499--1503, Oct. 2016.
+
+\bibitem{bazarevsky2019} V. Bazarevsky, Y. Kartynnik, A. Vakunov, K. Raveendran, and M. Grundmann, ``BlazeFace: Sub-millisecond neural face detection on mobile GPUs,'' \textit{arXiv:1907.05047}, Jul. 2019.
+
+\bibitem{viola2001} P. Viola and M. Jones, ``Rapid object detection using a boosted cascade of simple features,'' in \textit{Proc. IEEE Conf. Comput. Vis. Pattern Recognit. (CVPR)}, Dec. 2001, pp. I-511--I-518.
+
+\bibitem{wolf2020} T. Wolf \textit{et al.}, ``Transformers: State-of-the-art natural language processing,'' in \textit{Proc. Conf. Empirical Methods Natural Lang. Process.: Syst. Demonstrations}, Oct. 2020, pp. 38--45.
+
+\end{thebibliography}
+
+\end{document}

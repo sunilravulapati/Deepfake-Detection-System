@@ -1,0 +1,17 @@
+video_path,ground_truth,predicted_label,final_real_probability,final_fake_probability,total_frames,valid_face_detections,fallback_frames,primary_vit_frames,average_face_quality,average_spatial_score,average_temporal_score,average_structural_score,processing_time_s,fps,inference_latency_ms,end_to_end_latency_ms,experiment
+dataset/real/real_interview_02.mp4,real,Realism,0.5289,0.4711,15,15,0,15,84.36,0.0,0.0,0.0,1.8,8.4,90.28,119.06,A
+dataset/real/real_interview_03.mp4,real,Deepfake,0.3505,0.6495,14,14,0,14,82.42,0.0,0.0,0.0,1.73,8.26,90.93,121.01,A
+dataset/fake/fake_deeperforensics_02.mp4,fake,Realism,0.6112,0.3888,19,19,0,19,54.7,0.0,0.0,0.0,3.48,5.5,87.29,181.81,A
+dataset/fake/fake_deeperforensics_03.mp4,fake,Realism,0.5788,0.4212,19,19,0,19,55.14,0.0,0.0,0.0,3.65,5.24,87.39,190.96,A
+dataset/real/real_interview_02.mp4,real,Realism,0.5369,0.4631,15,15,0,15,84.36,0.0,0.0,0.0,1.76,8.6,89.45,116.29,B
+dataset/real/real_interview_03.mp4,real,Deepfake,0.3485,0.6515,14,14,0,14,82.42,0.0,0.0,0.0,1.73,8.22,90.47,121.61,B
+dataset/fake/fake_deeperforensics_02.mp4,fake,Realism,0.6294,0.3706,19,19,0,19,54.7,0.0,0.0,0.0,3.44,5.57,89.75,179.69,B
+dataset/fake/fake_deeperforensics_03.mp4,fake,Realism,0.5918,0.4082,19,19,0,19,55.14,0.0,0.0,0.0,3.65,5.22,90.04,191.4,B
+dataset/real/real_interview_02.mp4,real,Realism,0.6647,0.3353,15,15,15,0,84.36,0.1176,0.5308,0.4038,0.44,35.02,3.23,28.55,C
+dataset/real/real_interview_03.mp4,real,Realism,0.6264,0.3736,14,14,14,0,82.42,0.1194,0.587,0.4647,0.43,34.95,3.3,28.62,C
+dataset/fake/fake_deeperforensics_02.mp4,fake,Realism,0.6009,0.3991,19,19,19,0,54.7,0.2331,0.5669,0.4312,1.75,10.94,3.71,91.43,C
+dataset/fake/fake_deeperforensics_03.mp4,fake,Realism,0.5653,0.4347,19,19,19,0,55.14,0.2111,0.7108,0.4316,1.99,9.6,3.84,104.16,C
+dataset/real/real_interview_02.mp4,real,Realism,0.5513,0.4487,15,15,3,12,84.36,0.0256,0.5308,0.0828,1.71,8.77,87.0,113.99,D
+dataset/real/real_interview_03.mp4,real,Deepfake,0.3682,0.6318,14,14,4,10,82.42,0.0338,0.587,0.1317,1.62,8.79,86.44,113.73,D
+dataset/fake/fake_deeperforensics_02.mp4,fake,Realism,0.6725,0.3275,19,19,8,11,54.7,0.0825,0.5669,0.1763,3.6,5.3,93.66,188.64,D
+dataset/fake/fake_deeperforensics_03.mp4,fake,Deepfake,0.6247,0.3753,19,19,12,7,55.14,0.0878,0.7108,0.2811,3.83,4.99,93.72,200.48,D

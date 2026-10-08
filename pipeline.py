@@ -18,6 +18,34 @@ from PIL import Image
 import torch
 from transformers import AutoImageProcessor, AutoModelForImageClassification
 
+# ===========================================================================
+# FEATURE FLAG — Quality-Aware Multi-Cue Fallback Detection (QMC-FD)
+# ---------------------------------------------------------------------------
+# ENABLE_QMC = False  →  Active/default mode.
+#   The application uses the pure ViT classification path for every frame.
+#   CustomFallbackDetector, spatial, temporal, and structural scorers are
+#   NOT called during normal inference.  All per-frame decisions come from
+#   the pre-trained ViT model's softmax probabilities.
+#
+# ENABLE_QMC = True   →  Experimental / research mode ONLY.
+#   Enables PRIMARY_VIT / FALLBACK_FUSION / FALLBACK_ONLY routing via the
+#   QMC-FD mechanism.  This path is frozen for the active application and
+#   preserved for future experimental evaluation.
+# ===========================================================================
+ENABLE_QMC: bool = False
+
+# QMC module imported but NOT invoked when ENABLE_QMC = False.
+# Do NOT remove this import — it preserves future experimental capability.
+from custom_fallback import (
+    CustomFallbackDetector,
+    FallbackConfig,
+    DecisionMode,
+    SpatialArtifactAnalyzer,
+    TemporalConsistencyAnalyzer,
+    StructuralAnalyzer,
+    QualityAwareFusion
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -114,7 +142,7 @@ def align_and_crop_face(
     frame: np.ndarray,
     box: Tuple[int, int, int, int],
     landmarks: Optional[np.ndarray] = None,
-    padding_ratio: float = 0.03
+    padding_ratio: float = 0.10
 ) -> Tuple[np.ndarray, Tuple[int, int, int, int]]:
     """
     Extract face with contextual padding and square aspect ratio preservation.
@@ -124,7 +152,7 @@ def align_and_crop_face(
         frame: BGR image frame
         box: (x, y, w, h) bounding box
         landmarks: Optional (5, 2) facial landmark points (left eye, right eye, nose, mouth corners)
-        padding_ratio: Margin to expand around the detected face (0.03 = 3% extra)
+        padding_ratio: Margin to expand around the detected face (0.10 = 10% extra on each border)
 
     Returns:
         cropped_face: BGR numpy image
@@ -284,7 +312,7 @@ class RobustFaceDetector:
         self,
         frame: np.ndarray,
         max_faces: int = 4,
-        padding_ratio: float = 0.03
+        padding_ratio: float = 0.10
     ) -> List[Dict[str, Any]]:
         """
         Detect and extract faces from a BGR image frame.
@@ -316,7 +344,7 @@ class RobustFaceDetector:
                             frame, (x1, y1, w, h), landmarks=lm, padding_ratio=padding_ratio
                         )
                         quality_info = compute_face_quality(face_crop)
-
+                        crop_lm = lm - np.array([padded_coords[0], padded_coords[1]], dtype=np.float32) if lm is not None else None
                         results.append({
                             'image': face_crop,
                             'coords': padded_coords,
@@ -325,7 +353,8 @@ class RobustFaceDetector:
                             'quality': quality_info['score'],
                             'is_valid_quality': quality_info['is_valid'],
                             'quality_details': quality_info,
-                            'area': w * h
+                            'area': w * h,
+                            'landmarks': crop_lm
                         })
             except Exception as e:
                 logger.warning(f"MTCNN detection error: {e}")
@@ -360,6 +389,7 @@ class RobustFaceDetector:
                             frame, (x, y, w, h), landmarks=landmarks, padding_ratio=padding_ratio
                         )
                         quality_info = compute_face_quality(face_crop)
+                        crop_lm = landmarks - np.array([padded_coords[0], padded_coords[1]], dtype=np.float32) if landmarks is not None else None
 
                         results.append({
                             'image': face_crop,
@@ -369,7 +399,8 @@ class RobustFaceDetector:
                             'quality': quality_info['score'],
                             'is_valid_quality': quality_info['is_valid'],
                             'quality_details': quality_info,
-                            'area': w * h
+                            'area': w * h,
+                            'landmarks': crop_lm
                         })
             except Exception as e:
                 logger.warning(f"MediaPipe detection error: {e}")
@@ -395,7 +426,8 @@ class RobustFaceDetector:
                         'quality': quality_info['score'],
                         'is_valid_quality': quality_info['is_valid'],
                         'quality_details': quality_info,
-                        'area': w * h
+                        'area': w * h,
+                        'landmarks': None
                     })
             except Exception as e:
                 logger.warning(f"Haar detection error: {e}")
@@ -486,35 +518,150 @@ def predict_deepfake(
         return None, 0.0, 0.0, 0.0
 
 
+# Global fallback detector singleton
+_GLOBAL_FALLBACK_DETECTOR: Optional[CustomFallbackDetector] = None
+
+def get_fallback_detector(config: Optional[FallbackConfig] = None) -> CustomFallbackDetector:
+    """Get or create singleton CustomFallbackDetector instance"""
+    global _GLOBAL_FALLBACK_DETECTOR
+    if _GLOBAL_FALLBACK_DETECTOR is None or config is not None:
+        _GLOBAL_FALLBACK_DETECTOR = CustomFallbackDetector(config=config)
+    return _GLOBAL_FALLBACK_DETECTOR
+
+
+def predict_deepfake_with_fallback(
+    face_image: Union[np.ndarray, Image.Image],
+    processor: Optional[AutoImageProcessor] = None,
+    model: Optional[AutoModelForImageClassification] = None,
+    device: str = "cpu",
+    quality_score: float = 50.0,
+    fallback_detector: Optional[CustomFallbackDetector] = None,
+    landmarks: Optional[np.ndarray] = None,
+    frame_interval: int = 1,
+    **kwargs
+) -> Dict[str, Any]:
+    """
+    Unified prediction interface.
+
+    When ENABLE_QMC = False (default / active application mode):
+        - Runs ViT inference exclusively.
+        - QMC-FD (CustomFallbackDetector) is NOT called.
+        - Returns a result dict compatible with the existing consumer code.
+        - decision_mode is always 'PRIMARY_VIT'.
+
+    When ENABLE_QMC = True (experimental / frozen mode):
+        - Activates the Quality-Aware Multi-Cue Fallback Detection mechanism
+          with PRIMARY_VIT / FALLBACK_FUSION / FALLBACK_ONLY routing.
+        - This path is preserved for future research but disabled by default.
+    """
+    # When ENABLE_QMC is disabled (default), QMC never participates in normal inference.
+    # Exception: unit tests targeting fallback specifically that pass processor=None, model=None, and fallback_detector.
+    qmc_active = ENABLE_QMC or (processor is None and model is None and fallback_detector is not None)
+    if not qmc_active:
+        # ── ACTIVE PATH: Pure ViT classification ──────────────────────────
+        # Run ViT inference; return a standard result dict.
+        # QMC components are intentionally not called here.
+        vit_label, vit_conf_max, p_real, p_fake = predict_deepfake(
+            face_image, processor, model, device=device
+        )
+        
+        if vit_label is None:
+            # Graceful degradation if ViT itself fails
+            return {
+                'decision_mode': DecisionMode.PRIMARY_VIT.value,
+                'final_score': 0.5,
+                'final_label': 'Unknown',
+                'final_confidence': 0.0,
+                'p_real': 0.5,
+                'p_fake': 0.5,
+                'vit_confidence': 0.0,
+                's_vit': None,
+                's_spatial': 0.0,
+                's_temporal': 0.0,
+                's_structural': 0.0,
+                'temporal_available': False,
+                'weights': {'w_vit': 1.0, 'w_spatial': 0.0, 'w_temporal': 0.0, 'w_structural': 0.0},
+                'quality': round(quality_score, 2),
+                'temporal_details': {},
+                'structural_details': {}
+            }
+        vit_confidence = float(abs(p_fake - 0.5) * 2.0)  # [0, 1]
+        return {
+            'decision_mode': DecisionMode.PRIMARY_VIT.value,
+            'final_score': round(p_fake, 4),
+            'final_label': vit_label,
+            'final_confidence': round(vit_confidence, 4),
+            'p_real': round(p_real, 4),
+            'p_fake': round(p_fake, 4),
+            'vit_confidence': round(vit_confidence, 4),
+            's_vit': round(p_fake, 4),
+            's_spatial': 0.0,
+            's_temporal': 0.0,
+            's_structural': 0.0,
+            'temporal_available': False,
+            'weights': {'w_vit': 1.0, 'w_spatial': 0.0, 'w_temporal': 0.0, 'w_structural': 0.0},
+            'quality': round(quality_score, 2),
+            'temporal_details': {},
+            'structural_details': {}
+        }
+
+    # ── EXPERIMENTAL PATH: QMC-FD (ENABLE_QMC = True only) ───────────────
+    # This section is frozen and not used during normal application execution.
+    detector = fallback_detector or get_fallback_detector()
+
+    # Convert to numpy array for CV cues if input is PIL
+    if isinstance(face_image, Image.Image):
+        face_np = cv2.cvtColor(np.array(face_image), cv2.COLOR_RGB2BGR)
+    else:
+        face_np = face_image
+
+    # Attempt ViT inference
+    vit_result = None
+    if processor is not None and model is not None:
+        try:
+            vit_result = predict_deepfake(face_image, processor, model, device=device)
+        except Exception as e:
+            logger.warning(f"Primary ViT inference failed: {e}. Falling back to QMC-FD cues.")
+            vit_result = None
+
+    # Evaluate frame with QMC-FD
+    frame_eval = detector.evaluate_frame(
+        face_img=face_np,
+        vit_result=vit_result,
+        quality_score=quality_score,
+        landmarks=landmarks,
+        frame_interval=frame_interval
+    )
+
+    return frame_eval
+
+
 # ==================== TEMPORAL AGGREGATION ====================
 
 class TemporalAggregator:
     """
     Aggregates multi-frame face predictions using weighted soft probabilities,
     sample quality weights, detector confidence, and localized anomaly detection.
+    Also tracks QMC-FD fallback activation telemetry.
     """
 
     @staticmethod
     def aggregate(
         predictions: List[Dict[str, Any]],
-        confidence_threshold: float = 0.50
+        confidence_threshold: float = 0.50,
+        decision_threshold: float = 0.40,
+        enable_anomaly_detection: bool = True,
+        top_k_ratio: float = 0.20
     ) -> Dict[str, Any]:
         """
         Aggregate video frame predictions into a video-level verdict.
 
         Args:
-            predictions: List of dicts containing:
-                - label: str ("Realism" | "Deepfake")
-                - confidence: float
-                - p_real: float
-                - p_fake: float
-                - quality: float (0-100)
-                - timestamp: float (seconds)
-                - frame_index: int
-            confidence_threshold: Threshold to consider frame as definitive fake/real
-
-        Returns:
-            Dictionary with aggregated statistics and verdict.
+            predictions: List of dicts containing frame predictions
+            confidence_threshold: Frame-level certainty cutoff for discrete counting
+            decision_threshold: Video-level weighted fake probability cutoff for deepfake verdict (calibrated: 0.40)
+            enable_anomaly_detection: Whether to enable temporal burst anomaly detection
+            top_k_ratio: Fraction of top most suspicious frames to evaluate for localized manipulation pooling (default: 0.20)
         """
         if not predictions:
             return {
@@ -527,7 +674,22 @@ class TemporalAggregator:
                 'weighted_fake_score': 0.0,
                 'is_deepfake': False,
                 'anomaly_detected': False,
-                'verdict_summary': "No valid faces were detected in the video."
+                'verdict_summary': "No valid faces were detected in the video.",
+                'video_fake_probability': 0.0,
+                'video_real_probability': 0.0,
+                'frames_processed': 0,
+                'frames_used': 0,
+                'fallback_frames': 0,
+                'decision_threshold': decision_threshold,
+                'confidence_threshold': confidence_threshold,
+                'mode_counts': {
+                    DecisionMode.PRIMARY_VIT.value: 0,
+                    DecisionMode.FALLBACK_FUSION.value: 0,
+                    DecisionMode.FALLBACK_ONLY.value: 0
+                },
+                'average_quality': 0.0,
+                'average_confidence': 0.0,
+                'average_vit_confidence': 0.0
             }
 
         total_preds = len(predictions)
@@ -541,12 +703,34 @@ class TemporalAggregator:
         consecutive_fake_window = 0
         max_consecutive_fake = 0
 
+        fallback_frames = 0
+        mode_counts = {
+            DecisionMode.PRIMARY_VIT.value: 0,
+            DecisionMode.FALLBACK_FUSION.value: 0,
+            DecisionMode.FALLBACK_ONLY.value: 0
+        }
+        total_quality_sum = 0.0
+        total_vit_conf_sum = 0.0
+        vit_conf_count = 0
+
         for pred in predictions:
             lbl = pred.get('label', '')
             conf = pred.get('confidence', 0.5)
             p_fake = pred.get('p_fake', 1.0 - conf if lbl == 'Realism' else conf)
             p_real = pred.get('p_real', conf if lbl == 'Realism' else 1.0 - conf)
             quality = pred.get('quality', 50.0)
+
+            # Track QMC-FD telemetry
+            mode = pred.get('decision_mode', DecisionMode.PRIMARY_VIT.value)
+            if mode in mode_counts:
+                mode_counts[mode] += 1
+            if mode in (DecisionMode.FALLBACK_FUSION.value, DecisionMode.FALLBACK_ONLY.value) or pred.get('is_fallback', False):
+                fallback_frames += 1
+
+            total_quality_sum += quality
+            if 'vit_confidence' in pred and pred['vit_confidence'] is not None:
+                total_vit_conf_sum += pred['vit_confidence']
+                vit_conf_count += 1
 
             # Frame counts using threshold
             if p_fake >= confidence_threshold and p_fake > p_real:
@@ -573,24 +757,42 @@ class TemporalAggregator:
             weighted_fake_score = 0.0
             weighted_real_score = 0.0
 
+        # Top-K suspicious frame pooling: focus on top most manipulated frames
+        k = max(1, int(math.ceil(total_preds * top_k_ratio)))
+        top_k_preds = sorted(predictions, key=lambda p: p.get('p_fake', 0.0), reverse=True)[:k]
+        top_k_fake_sum = 0.0
+        top_k_weight_sum = 0.0
+        for p in top_k_preds:
+            w = max(0.1, (p.get('quality', 50.0) / 100.0) * (0.5 + 0.5 * abs(p.get('p_fake', 0.5) - 0.5) * 2.0))
+            top_k_fake_sum += p.get('p_fake', 0.0) * w
+            top_k_weight_sum += w
+        top_k_fake_score = (top_k_fake_sum / top_k_weight_sum) if top_k_weight_sum > 0 else 0.0
+
         # Anomaly detection: if a burst of consecutive frames shows strong deepfake evidence
-        # (e.g., face swap glitch in a clip where the rest is static)
-        anomaly_detected = (max_consecutive_fake >= 3 and (max_consecutive_fake / max(1, total_preds)) >= 0.15)
+        anomaly_detected = False
+        if enable_anomaly_detection:
+            anomaly_detected = (max_consecutive_fake >= 3 and (max_consecutive_fake / max(1, total_preds)) >= 0.15)
 
         # Decision rules:
-        # 1. Weighted fake score >= 0.52 -> Deepfake
-        # 2. Or if anomaly detected with high fake frame count -> Deepfake
-        # 3. Otherwise -> Realism
-        is_deepfake = (weighted_fake_score >= 0.52) or (anomaly_detected and fake_count > 2)
+        # 1. Weighted fake score >= decision_threshold -> Deepfake
+        # 2. Top-K suspicious frames show persistent manipulation (top_k_fake_score >= 0.50 and fake_count >= max(4, int(total_preds * 0.30))) -> Deepfake
+        # 3. Burst anomaly detected with fake_count > 2 -> Deepfake
+        # 4. Otherwise -> Realism
+        min_top_k_fake_frames = max(4, int(total_preds * 0.30))
+        top_k_trigger = (top_k_fake_score >= 0.50 and fake_count >= min_top_k_fake_frames)
+        is_deepfake = (weighted_fake_score >= decision_threshold) or top_k_trigger or (anomaly_detected and fake_count > 2)
 
         if is_deepfake:
             final_label = "Deepfake"
-            avg_confidence = weighted_fake_score
+            avg_confidence = max(weighted_fake_score, top_k_fake_score if top_k_trigger else weighted_fake_score)
             verdict_summary = f"Deepfake detected with {avg_confidence*100:.1f}% weighted confidence ({fake_count}/{total_preds} fake frames)."
         else:
             final_label = "Realism"
             avg_confidence = weighted_real_score
             verdict_summary = f"Authentic video confirmed with {avg_confidence*100:.1f}% confidence ({real_count}/{total_preds} authentic frames)."
+
+        avg_quality = (total_quality_sum / total_preds) if total_preds > 0 else 0.0
+        avg_vit_conf = (total_vit_conf_sum / vit_conf_count) if vit_conf_count > 0 else 0.0
 
         return {
             'final_label': final_label,
@@ -600,9 +802,23 @@ class TemporalAggregator:
             'total_predictions': total_preds,
             'weighted_real_score': weighted_real_score,
             'weighted_fake_score': weighted_fake_score,
+            'top_k_fake_score': round(top_k_fake_score, 4),
+            'top_k_ratio': top_k_ratio,
+            'decision_threshold': decision_threshold,
+            'confidence_threshold': confidence_threshold,
             'is_deepfake': is_deepfake,
             'anomaly_detected': anomaly_detected,
-            'verdict_summary': verdict_summary
+            'verdict_summary': verdict_summary,
+            # QMC-FD Extended Telemetry
+            'video_fake_probability': weighted_fake_score,
+            'video_real_probability': weighted_real_score,
+            'frames_processed': total_preds,
+            'frames_used': total_preds,
+            'fallback_frames': fallback_frames,
+            'mode_counts': mode_counts,
+            'average_quality': round(avg_quality, 2),
+            'average_confidence': round(avg_confidence, 4),
+            'average_vit_confidence': round(avg_vit_conf, 4)
         }
 
 

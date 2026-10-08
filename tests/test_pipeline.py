@@ -99,3 +99,38 @@ def test_detector_on_sample_video():
     assert len(faces) >= 1
     assert faces[0]['is_valid_quality']
     assert faces[0]['quality'] > 30.0
+
+
+def test_temporal_aggregator_top_k_pooling():
+    # Predictions where mean is modest, but top-k frames show persistent fake evidence
+    predictions = [
+        {"label": "Realism", "confidence": 0.85, "p_real": 0.85, "p_fake": 0.15, "quality": 80.0},
+        {"label": "Realism", "confidence": 0.80, "p_real": 0.80, "p_fake": 0.20, "quality": 80.0},
+        {"label": "Realism", "confidence": 0.82, "p_real": 0.82, "p_fake": 0.18, "quality": 80.0},
+        {"label": "Realism", "confidence": 0.75, "p_real": 0.75, "p_fake": 0.25, "quality": 80.0},
+        {"label": "Deepfake", "confidence": 0.70, "p_real": 0.30, "p_fake": 0.70, "quality": 85.0},
+        {"label": "Deepfake", "confidence": 0.65, "p_real": 0.35, "p_fake": 0.65, "quality": 85.0},
+        {"label": "Deepfake", "confidence": 0.60, "p_real": 0.40, "p_fake": 0.60, "quality": 85.0},
+        {"label": "Realism", "confidence": 0.85, "p_real": 0.85, "p_fake": 0.15, "quality": 80.0},
+        {"label": "Realism", "confidence": 0.80, "p_real": 0.80, "p_fake": 0.20, "quality": 80.0},
+        {"label": "Realism", "confidence": 0.85, "p_real": 0.85, "p_fake": 0.15, "quality": 80.0},
+    ]
+    res = TemporalAggregator.aggregate(predictions, decision_threshold=0.30, top_k_ratio=0.20)
+    assert 'top_k_fake_score' in res
+    assert res['top_k_ratio'] == 0.20
+    assert res['top_k_fake_score'] >= 0.60
+    assert res['decision_threshold'] == 0.30
+    assert res['is_deepfake']
+
+    res_default = TemporalAggregator.aggregate(predictions)
+    assert res_default['decision_threshold'] == 0.40
+
+
+def test_align_and_crop_default_padding():
+    # Verify default padding ratio is now 0.10
+    frame = np.zeros((400, 400, 3), dtype=np.uint8)
+    box = (100, 100, 100, 100)
+    crop, coords = align_and_crop_face(frame, box)
+    # With 0.10 padding on each side, side = 100 * (1.0 + 0.10 * 2.0) = 120
+    assert crop.shape[0] == 120
+    assert crop.shape[1] == 120

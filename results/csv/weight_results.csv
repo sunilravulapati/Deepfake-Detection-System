@@ -1,0 +1,8 @@
+weight_scheme,w_vit,w_spatial,w_temporal,w_structural,accuracy,precision,recall,f1,roc_auc,fpr,fnr
+W1 (Default),0.4,0.2,0.2,0.2,0.0,0.0,0.0,0.0,0.0,1.0,1.0
+W2 (ViT-Dominant 50%),0.5,0.1667,0.1667,0.1667,0.0,0.0,0.0,0.0,0.0,1.0,1.0
+W3 (ViT-Dominant 60%),0.6,0.1333,0.1333,0.1333,0.0,0.0,0.0,0.0,0.0,1.0,1.0
+W4 (Equal Weighting 25%),0.25,0.25,0.25,0.25,0.0,0.0,0.0,0.0,0.0,1.0,1.0
+W5 (Spatial-Focused),0.4,0.35,0.15,0.1,0.0,0.0,0.0,0.0,0.0,1.0,1.0
+W6 (Temporal-Focused),0.4,0.15,0.35,0.1,0.0,0.0,0.0,0.0,0.0,1.0,1.0
+W7 (Structural-Focused),0.4,0.15,0.15,0.3,0.0,0.0,0.0,0.0,0.0,1.0,1.0

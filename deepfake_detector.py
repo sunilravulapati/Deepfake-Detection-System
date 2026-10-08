@@ -12,9 +12,12 @@ from pipeline import (
     RobustFaceDetector,
     get_detector,
     predict_deepfake as pipeline_predict,
+    predict_deepfake_with_fallback,
+    get_fallback_detector,
     TemporalAggregator,
     aggregate_video_predictions
 )
+from custom_fallback import DecisionMode
 
 # Load Deep-Fake-Detector pre-trained model from Hugging Face
 print("Loading AI model & detector...")
@@ -23,7 +26,8 @@ processor = AutoImageProcessor.from_pretrained(model_name)
 model = AutoModelForImageClassification.from_pretrained(model_name)
 model.eval()  # Set to evaluation mode
 face_detector = get_detector()
-print(f"Model & {face_detector.backend} detector loaded successfully!")
+fallback_detector = get_fallback_detector()
+print(f"Model, {face_detector.backend} detector, & QMC-FD fallback loaded successfully!")
 
 
 def get_face_from_frame(frame: np.ndarray) -> List[Dict[str, Any]]:
@@ -42,23 +46,28 @@ def calculate_final_verdict(predictions: List[Dict[str, Any]]) -> Tuple[str, flo
     return aggregate_video_predictions(predictions)
 
 
-def draw_analysis_ui(frame: np.ndarray, time_remaining: float, predictions: List[Dict[str, Any]], current_verdict: Optional[str], real_count: int, fake_count: int, avg_confidence: float, mode: str = "Live") -> None:
-    """Draw analysis UI on frame"""
+def draw_analysis_ui(frame: np.ndarray, time_remaining: float, predictions: List[Dict[str, Any]], current_verdict: Optional[str], real_count: int, fake_count: int, avg_confidence: float, mode: str = "Live", current_mode_tag: str = "ViT") -> None:
+    """Draw analysis UI on frame with QMC-FD decision mode indicator"""
     height, width = frame.shape[:2]
     
     # Create semi-transparent overlay for stats
     overlay = frame.copy()
-    cv2.rectangle(overlay, (10, 10), (width - 10, 150), (0, 0, 0), -1)
+    cv2.rectangle(overlay, (10, 10), (width - 10, 170), (0, 0, 0), -1)
     cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
     
     # Title
     title = f"DEEPFAKE ANALYSIS - {mode.upper()} MODE"
-    cv2.putText(frame, title, (20, 40),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+    cv2.putText(frame, title, (20, 38),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
+    
+    # Decision Mode Tag
+    mode_color = (100, 255, 100) if "VIT" in current_mode_tag.upper() else (100, 200, 255)
+    cv2.putText(frame, f"Method: {current_mode_tag}", (max(20, width - 240), 38),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, mode_color, 2)
     
     # Time remaining
-    cv2.putText(frame, f"Time Remaining: {int(time_remaining)}s", (20, 70),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+    cv2.putText(frame, f"Time Remaining: {int(time_remaining)}s", (20, 68),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 0), 2)
     
     # Predictions collected
     cv2.putText(frame, f"Predictions Collected: {len(predictions)}", (20, 95),
@@ -72,7 +81,7 @@ def draw_analysis_ui(frame: np.ndarray, time_remaining: float, predictions: List
     if current_verdict:
         verdict_color = (0, 255, 0) if current_verdict == "Realism" else (0, 0, 255)
         verdict_text = "REAL" if current_verdict == "Realism" else "FAKE"
-        cv2.putText(frame, f"Leading: {verdict_text} ({avg_confidence*100:.1f}%)", (20, 145),
+        cv2.putText(frame, f"Leading: {verdict_text} ({avg_confidence*100:.1f}%)", (20, 148),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, verdict_color, 2)
 
 
@@ -150,6 +159,8 @@ def run_video_file_detection(video_path: str) -> None:
     # State variables
     predictions = []
     frame_count = 0
+    fallback_detector.reset_temporal_state()
+    current_mode_tag = "ViT"
     
     while True:
         ret, frame = cap.read()
@@ -171,26 +182,39 @@ def run_video_file_detection(video_path: str) -> None:
         if frame_count % FRAME_SKIP == 0 and len(face_data) > 0:
             best_face = face_data[0]
             face_img = best_face['image']
-            label, confidence, p_real, p_fake = pipeline_predict(face_img, processor, model)
+            eval_res = predict_deepfake_with_fallback(
+                face_img, processor, model, quality_score=best_face.get('quality', 50.0),
+                fallback_detector=fallback_detector,
+                landmarks=best_face.get('landmarks'),
+                frame_interval=FRAME_SKIP
+            )
             
-            if label:
-                predictions.append({
-                    'label': label,
-                    'confidence': confidence,
-                    'p_real': p_real,
-                    'p_fake': p_fake,
-                    'quality': best_face.get('quality', 50.0),
-                    'timestamp': elapsed_time,
-                    'frame_index': frame_count
-                })
-                print(f"Frame {frame_count}/{total_frames}: {label} ({confidence*100:.2f}%) [Quality: {best_face.get('quality', 0):.0f}] - Total: {len(predictions)}")
+            label = eval_res['final_label']
+            confidence = eval_res['final_confidence']
+            current_mode_tag = eval_res['decision_mode']
+            
+            predictions.append({
+                'label': label,
+                'confidence': confidence,
+                'p_real': eval_res['p_real'],
+                'p_fake': eval_res['p_fake'],
+                'quality': best_face.get('quality', 50.0),
+                'timestamp': elapsed_time,
+                'frame_index': frame_count,
+                'decision_mode': eval_res['decision_mode'],
+                'vit_confidence': eval_res.get('vit_confidence', 0.0),
+                's_spatial': eval_res.get('s_spatial', 0.0),
+                's_temporal': eval_res.get('s_temporal', 0.0),
+                's_structural': eval_res.get('s_structural', 0.0)
+            })
+            print(f"Frame {frame_count}/{total_frames}: {label} ({confidence*100:.2f}%) [Method: {current_mode_tag}] [Quality: {best_face.get('quality', 0):.0f}] - Total: {len(predictions)}")
         
         # Calculate current leading verdict
         current_verdict, temp_confidence, temp_real, temp_fake = calculate_final_verdict(predictions)
         
         # Draw analysis UI
         time_remaining = ANALYSIS_WINDOW - elapsed_time
-        draw_analysis_ui(frame, time_remaining, predictions, current_verdict, temp_real, temp_fake, temp_confidence, mode="Video")
+        draw_analysis_ui(frame, time_remaining, predictions, current_verdict, temp_real, temp_fake, temp_confidence, mode="Video", current_mode_tag=current_mode_tag)
         
         # Display frame
         cv2.imshow("Video Deepfake Detection - Press 'q' to quit", frame)
@@ -215,6 +239,8 @@ def run_video_file_detection(video_path: str) -> None:
     print(f"Real Count: {real_count}")
     print(f"Fake Count: {fake_count}")
     print(f"Total Predictions: {len(predictions)}")
+    print(f"Fallback Frames: {agg_res.get('fallback_frames', 0)}")
+    print(f"Decision Modes: {agg_res.get('mode_counts', {})}")
     print(f"{'='*50}\n")
     
     # Show final verdict for 10 seconds or until key press
@@ -260,6 +286,8 @@ def run_live_webcam_detection() -> None:
     analysis_round = 1
     show_verdict = False
     verdict_start_time = 0
+    fallback_detector.reset_temporal_state()
+    current_mode_tag = "ViT"
     
     final_label = None
     avg_confidence = 0.0
@@ -288,6 +316,8 @@ def run_live_webcam_detection() -> None:
                 predictions = []
                 start_time = time.time()
                 analysis_round += 1
+                fallback_detector.reset_temporal_state()
+                current_mode_tag = "ViT"
                 print(f"\n--- Starting Analysis Round {analysis_round} ---")
             
             if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -306,30 +336,47 @@ def run_live_webcam_detection() -> None:
         if frame_count % FRAME_SKIP == 0 and len(face_data) > 0:
             best_face = face_data[0]
             face_img = best_face['image']
-            label, confidence, p_real, p_fake = pipeline_predict(face_img, processor, model)
+            eval_res = predict_deepfake_with_fallback(
+                face_img, processor, model, quality_score=best_face.get('quality', 50.0),
+                fallback_detector=fallback_detector,
+                landmarks=best_face.get('landmarks'),
+                frame_interval=FRAME_SKIP
+            )
             
-            if label:
-                predictions.append({
-                    'label': label,
-                    'confidence': confidence,
-                    'p_real': p_real,
-                    'p_fake': p_fake,
-                    'quality': best_face.get('quality', 50.0),
-                    'timestamp': elapsed_time
-                })
-                print(f"Frame {frame_count}: {label} ({confidence*100:.2f}%) - Total: {len(predictions)}")
+            label = eval_res['final_label']
+            confidence = eval_res['final_confidence']
+            current_mode_tag = eval_res['decision_mode']
+            
+            predictions.append({
+                'label': label,
+                'confidence': confidence,
+                'p_real': eval_res['p_real'],
+                'p_fake': eval_res['p_fake'],
+                'quality': best_face.get('quality', 50.0),
+                'timestamp': elapsed_time,
+                'decision_mode': eval_res['decision_mode'],
+                'vit_confidence': eval_res.get('vit_confidence', 0.0),
+                's_spatial': eval_res.get('s_spatial', 0.0),
+                's_temporal': eval_res.get('s_temporal', 0.0),
+                's_structural': eval_res.get('s_structural', 0.0)
+            })
+            print(f"Frame {frame_count}: {label} ({confidence*100:.2f}%) [Method: {current_mode_tag}] - Total: {len(predictions)}")
         
         # Calculate current leading verdict
         current_verdict, temp_confidence, temp_real, temp_fake = calculate_final_verdict(predictions)
         
         # Draw analysis UI
         time_remaining = ANALYSIS_WINDOW - elapsed_time
-        draw_analysis_ui(frame, time_remaining, predictions, current_verdict, temp_real, temp_fake, temp_confidence, mode="Live")
+        draw_analysis_ui(frame, time_remaining, predictions, current_verdict, temp_real, temp_fake, temp_confidence, mode="Live", current_mode_tag=current_mode_tag)
         
         # Check if analysis window is complete
         if elapsed_time >= ANALYSIS_WINDOW:
             # Calculate final verdict
-            final_label, avg_confidence, real_count, fake_count = calculate_final_verdict(predictions)
+            agg_res = TemporalAggregator.aggregate(predictions)
+            final_label = agg_res['final_label']
+            avg_confidence = agg_res['avg_confidence']
+            real_count = agg_res['real_count']
+            fake_count = agg_res['fake_count']
             
             print(f"\n{'='*50}")
             print(f"ANALYSIS ROUND {analysis_round} COMPLETE")
@@ -339,6 +386,8 @@ def run_live_webcam_detection() -> None:
             print(f"Real Count: {real_count}")
             print(f"Fake Count: {fake_count}")
             print(f"Total Predictions: {len(predictions)}")
+            print(f"Fallback Frames: {agg_res.get('fallback_frames', 0)}")
+            print(f"Decision Modes: {agg_res.get('mode_counts', {})}")
             print(f"{'='*50}\n")
             
             # Show verdict screen

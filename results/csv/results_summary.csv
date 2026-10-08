@@ -1,0 +1,5 @@
+experiment,description,accuracy,precision,recall,specificity,f1,roc_auc,fpr,fnr,tp,fp,fn,tn,accuracy_ci_95,f1_ci_95,auc_ci_95,inference_latency_ms,end_to_end_latency_ms,effective_fps
+A,ViT Only,0.25,0.0,0.0,0.5,0.0,0.0,0.5,1.0,0,1,2,1,"(0.0, 0.75)","(0.0, 0.0)","(0.0, 0.0)",88.97,153.21,6.53
+B,ViT + Temporal Aggregation,0.25,0.0,0.0,0.5,0.0,0.0,0.5,1.0,0,1,2,1,"(0.0, 0.75)","(0.0, 0.0)","(0.0, 0.0)",89.93,152.25,6.57
+C,QMC-FD Fallback Only (No ViT),0.5,0.0,0.0,1.0,0.0,1.0,0.0,1.0,0,0,2,2,"(0.0, 1.0)","(0.0, 0.0)","(1.0, 1.0)",3.52,63.19,15.83
+D,Full System (ViT + QMC-FD + Temporal Agg),0.5,0.5,0.5,0.5,0.5,0.0,0.5,0.5,1,1,1,1,"(0.0, 1.0)","(0.0, 1.0)","(0.0, 0.0)",90.21,154.21,6.48

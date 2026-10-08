@@ -1,0 +1,21 @@
+filename,ground_truth,prediction,verdict_label,is_inconclusive,p_real,p_fake,analyzed_frames,authentic_frames,fake_frames,avg_face_quality,processing_time_s,effective_fps,anomaly_detected,status
+01__exit_phone_room.mp4,Real,Fake,Likely Authentic,False,0.6001,0.3999,39,22,17,52.37,32.23,1.21,True,Success
+01__hugging_happy.mp4,Real,Fake,Likely Authentic,False,0.6388,0.3612,40,26,14,59.4,9.48,4.22,False,Success
+01__outside_talking_pan_laughing.mp4,Real,Real,Likely Authentic,False,0.7334,0.2666,37,28,9,66.28,8.85,4.18,False,Success
+01__outside_talking_still_laughing.mp4,Real,Real,Likely Authentic,False,0.7179,0.2821,40,29,11,69.87,9.85,4.06,False,Success
+01__podium_speech_happy.mp4,Real,Real,Likely Authentic,False,0.7827,0.2173,40,39,1,58.72,42.92,0.93,False,Success
+01__talking_against_wall.mp4,Real,Real,Likely Authentic,False,0.8018,0.1982,40,39,1,54.93,11.03,3.63,False,Success
+01__talking_angry_couch.mp4,Real,Real,Likely Authentic,False,0.7848,0.2152,40,35,5,61.31,35.14,1.14,False,Success
+01__walking_outside_cafe_disgusted.mp4,Real,Real,Likely Authentic,False,0.7616,0.2384,39,37,2,70.09,40.49,0.96,False,Success
+02__kitchen_still.mp4,Real,Real,Likely Authentic,False,0.8959,0.1041,40,39,1,70.1,8.81,4.54,False,Success
+02__meeting_serious.mp4,Real,Real,Likely Authentic,False,0.6148,0.3852,40,33,7,56.94,11.8,3.39,False,Success
+01_02__exit_phone_room__YVGY8LOK.mp4,Fake,Real,Likely Authentic,False,0.7357,0.2643,27,27,0,56.4,7.67,3.52,False,Success
+01_02__hugging_happy__YVGY8LOK.mp4,Fake,Fake,Inconclusive — May Be Manipulated,True,0.4099,0.5901,40,14,26,58.07,45.97,0.87,True,Success
+01_02__outside_talking_still_laughing__YVGY8LOK.mp4,Fake,Fake,Inconclusive — May Be Manipulated,True,0.4652,0.5348,40,13,27,67.59,39.77,1.01,True,Success
+01_02__talking_against_wall__YVGY8LOK.mp4,Fake,Fake,Inconclusive — May Be Manipulated,True,0.5274,0.4726,40,19,21,54.46,39.53,1.01,True,Success
+01_02__talking_angry_couch__YVGY8LOK.mp4,Fake,Fake,Inconclusive — May Be Manipulated,True,0.4329,0.5671,40,14,26,60.89,49.79,0.8,True,Success
+01_02__walking_outside_cafe_disgusted__YVGY8LOK.mp4,Fake,Real,Likely Authentic,False,0.7144,0.2856,28,22,6,70.05,37.24,0.75,False,Success
+01_03__outside_talking_pan_laughing__ISF9SP4G.mp4,Fake,Fake,Likely Authentic,False,0.6899,0.3101,40,28,12,65.33,53.3,0.75,False,Success
+01_03__podium_speech_happy__480LQD1C.mp4,Fake,Fake,Inconclusive — May Be Manipulated,True,0.4119,0.5881,40,12,28,58.16,34.34,1.16,True,Success
+01_04__kitchen_still__GBC7ZGDP.mp4,Fake,Real,Likely Authentic,False,0.7425,0.2575,40,34,6,63.68,26.52,1.51,False,Success
+01_04__meeting_serious__0XUW13RW.mp4,Fake,Fake,Inconclusive — May Be Manipulated,True,0.5652,0.4348,40,20,20,53.55,43.99,0.91,False,Success

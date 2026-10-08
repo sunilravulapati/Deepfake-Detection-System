@@ -1,0 +1,7 @@
+condition,perturbation_code,full_system_accuracy,full_system_f1,full_system_auc,full_system_fpr,vit_baseline_accuracy,vit_baseline_f1,vit_baseline_auc,vit_baseline_fpr,f1_delta
+Original (Clean),none,0.5,0.5,0.0,0.5,0.25,0.0,0.0,0.5,0.5
+JPEG Compression (Q=25),compression,0.25,0.4,0.0,1.0,0.0,0.0,0.0,1.0,0.4
+Gaussian Blur (15x15),blur,0.5,0.5,0.5,0.5,0.5,0.6667,0.0,1.0,-0.1667
+Low Illumination (0.35x),low_illumination,0.0,0.0,0.0,1.0,0.0,0.0,0.0,1.0,0.0
+Resolution Reduction (4x),low_res,0.0,0.0,0.0,1.0,0.25,0.4,0.0,1.0,-0.4
+Gaussian Noise (std=15),noise,0.0,0.0,0.0,1.0,0.0,0.0,0.0,1.0,0.0

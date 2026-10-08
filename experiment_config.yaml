@@ -1,0 +1,82 @@
+# Experiment Configuration for Deepfake Detection Research Paper
+# System: "An AI-Based Deepfake Detection System for Video and Real-Time Webcam Analysis Using Vision Transformers"
+
+experiment_meta:
+  paper_title: "An AI-Based Deepfake Detection System for Video and Real-Time Webcam Analysis Using Vision Transformers"
+  target_venue: "IEEE"
+  version: "1.0.0"
+  random_seed: 42
+  timestamp: "2026-10-01"
+
+dataset:
+  root_dir: "dataset"
+  metadata_csv: "dataset/metadata.csv"
+  real_dir: "dataset/real"
+  fake_dir: "dataset/fake"
+  splits:
+    train_ratio: 0.0
+    val_ratio: 0.3333
+    test_ratio: 0.6667
+  supported_extensions:
+    - ".mp4"
+    - ".avi"
+    - ".mov"
+
+sampling:
+  target_sample_fps: 3.0
+  max_samples_per_video: 40
+  warmup_frames: 3
+
+face_detector:
+  preferred_backend: "auto"  # MTCNN -> MediaPipe -> Haar
+  min_face_size: 40
+  min_confidence: 0.70
+  padding_ratio: 0.10
+  alignment_enabled: true
+
+quality_gate:
+  min_blur_laplacian_var: 20.0
+  min_brightness: 12.0
+  max_brightness: 248.0
+  min_contrast_std: 6.0
+  min_face_dimension: 40
+
+vit_model:
+  model_name: "prithivMLmods/Deep-Fake-Detector-v2-Model"
+  architecture: "Vision Transformer (ViT-Base)"
+  device: "cpu"  # CPU / CUDA
+  batch_size: 1
+  fallback_uncertainty_threshold: 0.70  # Calibration search: [0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80]
+
+qmc_fd_weights:
+  base_weight_vit: 0.40
+  base_weight_spatial: 0.20
+  base_weight_temporal: 0.20
+  base_weight_structural: 0.20
+  quality_weight_floor: 0.25
+
+temporal_cue:
+  canonical_size: [128, 128]
+  max_residual_threshold: 28.0
+  interval_scale_factor: 2.5
+  rigid_anchor_box: [25, 80, 25, 103]
+
+structural_cue:
+  canonical_size: [128, 128]
+  asymmetry_scale: 50.0
+  canny_low: 40
+  canny_high: 120
+
+aggregation:
+  confidence_threshold: 0.50  # Frame-level certainty cutoff
+  decision_threshold: 0.40    # Video-level fake score cutoff (calibrated from 0.50)
+  top_k_ratio: 0.20           # Top suspicious frames ratio for localized anomaly pooling
+  enable_anomaly_detection: true
+  anomaly_min_consecutive_frames: 3
+  anomaly_ratio_threshold: 0.15
+
+hardware:
+  platform: "Windows 11 x64"
+  python_version: "3.14.3"
+  torch_version: "2.13.0"
+  device_name: "Intel/AMD Processor (CPU Benchmark Execution)"
